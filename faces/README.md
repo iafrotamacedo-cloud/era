@@ -50,7 +50,7 @@ Fases 1 e 2 de 7 concluídas.
 |---|---|---|---|
 | 1 | `tensor`, `kernel` | tensor N-d, matmul bloqueado, im2col, Conv2D, depthwise | **pronto** |
 | 2 | `nn` | camadas, workspace reutilizável, fusão de BatchNorm | **pronto** |
-| 3 | `onnx`, `graph` | parser de `.onnx` e executor de grafo | — |
+| 3 | `onnx`, `graph` | parser de `.onnx` **pronto**; executor de grafo pendente | em andamento |
 | 4 | `embed` | ArcFace fim a fim | — |
 | 5 | `detect`, `align` | detecção e alinhamento | — |
 | 6 | `index` | busca 1:N, serialização | — |
@@ -151,6 +151,28 @@ go vet ./...
 As implementações otimizadas são conferidas contra versões ingênuas em
 `kernel/reference.go`, escritas para serem óbvias em vez de rápidas. É o que
 permite afirmar que uma otimização preservou o resultado.
+
+## Leitura de modelos
+
+O `.onnx` é uma mensagem Protobuf. Como a ERA não tem dependências, o leitor
+do formato binário mora em [`internal/protowire`](../internal/protowire) — e é
+compartilhado com o motor `maps`, que lê `.osm.pbf`, outro Protobuf de esquema
+completamente diferente.
+
+O pacote [`faces/onnx`](onnx/) põe o esquema do ONNX em cima disso e devolve a
+estrutura crua: nós, pesos, atributos. Ele **não executa nada** — quem executa
+é o `graph`. Separar as duas coisas mantém erro de leitura de arquivo e erro
+de execução de rede como problemas distintos.
+
+Os testes montam modelos `.onnx` sintéticos campo a campo, com o escritor do
+`protowire`. Isso permite construir os casos difíceis — arquivo truncado, tipo
+inesperado, pesos em arquivo externo — que ninguém consegue de propósito no
+mundo real.
+
+Suporta `raw_data` e os campos tipados, campos repetidos empacotados ou um a
+um, `float16`/`bfloat16`/`float64`/inteiros, e dimensões simbólicas. Pesos em
+arquivo externo são detectados e viram **erro explícito** — devolver tensores
+vazios em silêncio produziria uma rede que roda e dá resultado errado.
 
 ## Licença
 

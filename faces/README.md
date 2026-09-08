@@ -44,13 +44,13 @@ mesma direção. Comparar identidades vira, então, medir um ângulo.
 
 ## Estado
 
-Fases 1 e 2 de 7 concluídas.
+Fases 1 a 3 de 7 concluídas.
 
 | Fase | Pacote | Entrega | Estado |
 |---|---|---|---|
 | 1 | `tensor`, `kernel` | tensor N-d, matmul bloqueado, im2col, Conv2D, depthwise | **pronto** |
 | 2 | `nn` | camadas, workspace reutilizável, fusão de BatchNorm | **pronto** |
-| 3 | `onnx`, `graph` | parser de `.onnx` **pronto**; executor de grafo pendente | em andamento |
+| 3 | `onnx`, `graph` | parser de `.onnx` e executor de grafo | **pronto** |
 | 4 | `embed` | ArcFace fim a fim | — |
 | 5 | `detect`, `align` | detecção e alinhamento | — |
 | 6 | `index` | busca 1:N, serialização | — |
@@ -173,6 +173,50 @@ Suporta `raw_data` e os campos tipados, campos repetidos empacotados ou um a
 um, `float16`/`bfloat16`/`float64`/inteiros, e dimensões simbólicas. Pesos em
 arquivo externo são detectados e viram **erro explícito** — devolver tensores
 vazios em silêncio produziria uma rede que roda e dá resultado errado.
+
+## Execução do grafo
+
+O pacote [`graph`](graph/) pega a estrutura crua do `onnx`, resolve as ligações
+entre os nós, monta as camadas do `nn` com os pesos certos e executa.
+
+O ONNX não tem ponteiros: as ligações são **nomes**. A saída `conv1_out` de um
+nó é a entrada `conv1_out` do próximo. Executar é manter uma tabela de nome
+para tensor, alimentada por três origens — pesos, entradas de quem chama, e
+saídas produzidas pelos nós conforme rodam.
+
+**Ordem de execução.** A especificação exige que os nós venham em ordem
+topológica. O `graph` não confia nisso e reordena. Custa uma passada e elimina
+uma classe de falha difícil de diagnosticar: um exportador fora de ordem
+produziria "valor não encontrado" no meio da rede, sem pista da causa.
+
+**Montagem separada da execução.** Forma dos pesos, atributos coerentes,
+combinações não suportadas — tudo é validado uma vez, ao carregar. O que sai
+dali roda sem conferir nada, uma vez por rosto.
+
+### Operadores
+
+| | |
+|---|---|
+| Com pesos | `Conv` `BatchNormalization` `PRelu` `Gemm` `MatMul` |
+| Espacial | `GlobalAveragePool` `MaxPool` `AveragePool` |
+| Ativação | `Relu` `LeakyRelu` `Sigmoid` `Tanh` `Clip` `Softmax` |
+| Aritmética | `Add` `Sub` `Mul` `Div`, com transmissão de forma estilo NumPy |
+| Forma | `Flatten` `Reshape` `Transpose` `Concat` `Unsqueeze` `Squeeze` |
+| Neutros | `Identity` `Dropout` `Constant` |
+
+Um operador ausente é reportado junto com todos os outros que faltarem, para
+que carregar um modelo novo não vire uma sequência de tentativas.
+
+### O que vira erro em vez de aproximação
+
+- Saídas de treino (`BatchNormalization` com estatísticas do lote, `Dropout`
+  com máscara) — executar só a primeira saída **rodaria**, e daria resultado
+  errado
+- Padding assimétrico e `auto_pad=SAME_*`
+- `Gemm` com `alpha`/`beta`/`transA` fora do usual
+
+A regra é a mesma dos pesos em arquivo externo: uma rede que carrega, roda e
+dá resposta errada é o pior desfecho possível numa biblioteca.
 
 ## Licença
 

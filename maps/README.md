@@ -1,6 +1,4 @@
-# ERA MAPAS
-
-[![CI](https://github.com/iafrotamacedo-cloud/era-mapas/actions/workflows/ci.yml/badge.svg)](https://github.com/iafrotamacedo-cloud/era-mapas/actions/workflows/ci.yml)
+# ERA · maps
 
 Motor de distâncias e rotas rodoviárias em Go puro. Zero dependências.
 

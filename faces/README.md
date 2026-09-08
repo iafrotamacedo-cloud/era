@@ -1,6 +1,4 @@
-# ERA
-
-[![CI](https://github.com/iafrotamacedo-cloud/era/actions/workflows/ci.yml/badge.svg)](https://github.com/iafrotamacedo-cloud/era/actions/workflows/ci.yml)
+# ERA · faces
 
 Motor de reconhecimento facial em Go puro. Zero dependências.
 

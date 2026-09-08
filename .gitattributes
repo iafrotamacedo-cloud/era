@@ -4,6 +4,8 @@
 
 # Binarios: nunca converter.
 *.onnx binary
+*.pbf binary
+*.eramap binary
 *.png binary
 *.jpg binary
 *.jpeg binary

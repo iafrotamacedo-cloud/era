@@ -35,9 +35,14 @@ jobs:
         run: go test -count=1 -shuffle=on ./...
 
   # O detector de corrida, que nao roda na maquina do desenvolvedor por
-  # falta de compilador C. Os kernels dividem trabalho entre goroutines que
-  # escrevem no mesmo buffer de saida -- separadas por faixas de linhas, mas
-  # isso e uma afirmacao que precisa ser verificada, nao assumida.
+  # falta de compilador C.
+  #
+  # Dois motivos para ele existir aqui. Em faces, os kernels dividem
+  # trabalho entre goroutines que escrevem no mesmo buffer de saida --
+  # separadas por faixas de linhas, mas isso e uma afirmacao que precisa
+  # ser verificada, nao assumida. Em maps, o Grid declara ser seguro para
+  # leitura simultanea depois de montado, e a declaracao vale o que a
+  # verificacao provar.
   race:
     name: Detector de corrida
     runs-on: ubuntu-latest
@@ -55,7 +60,7 @@ jobs:
       # Repete varias vezes: corrida e bug probabilistico, e uma passada
       # limpa nao prova nada.
       - name: Testes com -race, 5 repeticoes
-        run: go test -race -count=5 ./kernel/
+        run: go test -race -count=5 ./faces/kernel/
 
   lint:
     name: Formatacao e vet
@@ -90,6 +95,12 @@ jobs:
 
   # A ERA promete zero dependencias. Promessa sem verificacao e so
   # intencao: basta um "go get" distraido para quebra-la em silencio.
+  #
+  # Num monorepo essa promessa fica mais fragil do que em repositorios
+  # separados: uma dependencia trazida por um motor passa a constar do
+  # go.mod dos tres. Se algum dia um deles precisar de biblioteca externa,
+  # e aqui que a decisao vai aparecer -- e a saida sera dar go.mod proprio
+  # aquele motor, nao afrouxar esta checagem.
   dependencias:
     name: Zero dependencias
     runs-on: ubuntu-latest
@@ -119,9 +130,11 @@ jobs:
           fi
           echo "ok: sem cgo"
 
-  # Sem cgo, um pacote Go cross-compila para qualquer alvo. Essa e a razao
-  # principal de nao termos escolhido C++ -- entao e uma promessa que
-  # merece ser testada a cada push, e nao descoberta quebrada meses depois.
+  # Sem cgo, um pacote Go cross-compila para qualquer alvo. E a razao
+  # principal de nao termos escolhido C++ em faces, e de nao termos subido
+  # um OSRM num container em maps: o motor precisa caber dentro do sistema
+  # que o usa, do servidor ao coletor de rua. Promessa que merece ser
+  # testada a cada push, e nao descoberta quebrada meses depois.
   crosscompile:
     name: Cross-compile / ${{ matrix.goos }}-${{ matrix.goarch }}
     runs-on: ubuntu-latest
@@ -168,5 +181,8 @@ jobs:
           go-version: stable
           check-latest: true
 
-      - name: Rodar benchmarks
-        run: go test ./kernel/ -run='^$' -bench=. -benchtime=20x
+      - name: faces
+        run: go test ./faces/kernel/ -run='^$' -bench=. -benchtime=20x
+
+      - name: maps
+        run: go test ./maps/geo/ -run='^$' -bench=. -benchtime=100x

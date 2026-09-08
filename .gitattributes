@@ -1,0 +1,9 @@
+# O repositorio guarda tudo em LF. Sem isso, um checkout no Windows pode
+# gravar CRLF e o gofmt do CI (que roda no Linux) reprova o arquivo.
+* text=auto eol=lf
+
+# Binarios: nunca converter.
+*.onnx binary
+*.png binary
+*.jpg binary
+*.jpeg binary

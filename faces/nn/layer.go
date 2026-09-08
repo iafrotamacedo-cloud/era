@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/iafrotamacedo-cloud/era/tensor"
+	"github.com/iafrotamacedo-cloud/era/faces/tensor"
 )
 
 // Layer e uma etapa da rede.

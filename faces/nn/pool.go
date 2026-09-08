@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/iafrotamacedo-cloud/era/tensor"
+	"github.com/iafrotamacedo-cloud/era/faces/tensor"
 )
 
 // GlobalAvgPool reduz cada canal a um unico numero: a media de todas as

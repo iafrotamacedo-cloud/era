@@ -3,7 +3,7 @@ package nn
 import (
 	"fmt"
 
-	"github.com/iafrotamacedo-cloud/era/tensor"
+	"github.com/iafrotamacedo-cloud/era/faces/tensor"
 )
 
 // PReLU e a ativacao usada pelas redes de reconhecimento facial:

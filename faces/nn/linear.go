@@ -3,8 +3,8 @@ package nn
 import (
 	"fmt"
 
-	"github.com/iafrotamacedo-cloud/era/kernel"
-	"github.com/iafrotamacedo-cloud/era/tensor"
+	"github.com/iafrotamacedo-cloud/era/faces/kernel"
+	"github.com/iafrotamacedo-cloud/era/faces/tensor"
 )
 
 // Linear e a camada totalmente conectada: y = W*x + b.

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/iafrotamacedo-cloud/era/tensor"
+	"github.com/iafrotamacedo-cloud/era/faces/tensor"
 )
 
 // BatchNorm normaliza cada canal com estatisticas fixas, aprendidas no

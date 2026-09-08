@@ -17,7 +17,7 @@
 // Sequential.Fuse.
 package nn
 
-import "github.com/iafrotamacedo-cloud/era/tensor"
+import "github.com/iafrotamacedo-cloud/era/faces/tensor"
 
 // blocoMinimo e o tamanho minimo de cada bloco do Workspace, em float32.
 // 64Ki float32 = 256 KB, grande o bastante para caber varios tensores

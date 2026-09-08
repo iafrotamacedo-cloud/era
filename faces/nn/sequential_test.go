@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/iafrotamacedo-cloud/era/tensor"
+	"github.com/iafrotamacedo-cloud/era/faces/tensor"
 )
 
 // redeDeTeste monta uma rede com a cara de um bloco de MobileFaceNet:

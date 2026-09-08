@@ -5,8 +5,8 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/iafrotamacedo-cloud/era/kernel"
-	"github.com/iafrotamacedo-cloud/era/tensor"
+	"github.com/iafrotamacedo-cloud/era/faces/kernel"
+	"github.com/iafrotamacedo-cloud/era/faces/tensor"
 )
 
 func TestConv2DContraKernelDeReferencia(t *testing.T) {

@@ -50,7 +50,7 @@ Fase 1 de 7 concluída.
 
 | Fase | Pacote | Entrega | Estado |
 |---|---|---|---|
-| 1 | `tensor`, `kernel` | tensor N-d, matmul bloqueado, im2col, Conv2D | **pronto** |
+| 1 | `tensor`, `kernel` | tensor N-d, matmul bloqueado, im2col, Conv2D, depthwise | **pronto** |
 | 2 | `nn` | camadas: Conv2D, BatchNorm, PReLU, Linear | — |
 | 3 | `onnx`, `graph` | parser de `.onnx` e executor de grafo | — |
 | 4 | `embed` | ArcFace fim a fim | — |
@@ -63,14 +63,25 @@ Runtime na quarta casa decimal, a tecnologia está reproduzida.
 
 ## Desempenho
 
-Medido num Intel i7-9750H, 6 núcleos / 12 threads. Matmul 512×512×512:
+Medido num Intel i7-9750H, 6 núcleos / 12 threads.
+
+**Matmul 512×512×512** — o efeito de cada otimização, isolado:
 
 | Versão | GFLOPS | Ganho |
 |---|---|---|
-| Ingênua | 0,99 | — |
-| Bloqueada, 1 thread | 2,60 | 2,6× (cache) |
-| Bloqueada, 12 threads | 14,13 | 5,4× (paralelismo) |
-| | | **14,2× no total** |
+| Ingênua | 1,08 | — |
+| Bloqueada, 1 thread | 3,53 | 3,3× (cache) |
+| Bloqueada, 12 threads | 13,72 | 3,9× (paralelismo) |
+| | | **12,7× no total** |
+
+**Camadas com a geometria de uma rede de reconhecimento facial:**
+
+| Camada | GFLOPS |
+|---|---|
+| Entrada 112×112×3, stride 2 | 10,95 |
+| Depthwise 3×3, 56×56×64 | 10,85 |
+| Pontual 1×1, 56×56, 64→128 | 12,57 |
+| 3×3, 14×14, 128→256 | 13,62 |
 
 Rode você mesmo:
 
@@ -78,21 +89,28 @@ Rode você mesmo:
 go test ./kernel/ -bench=. -run='^$'
 ```
 
-### Gargalo conhecido
+### Depthwise tem kernel próprio
 
-Convolução depthwise roda a **0,86 GFLOPS**, contra ~12 das demais camadas.
-A causa: com `Groups = C`, o `Conv2D` faz uma matmul por grupo com `m = 1`, e
-a divisão de trabalho por linhas desliga o paralelismo.
+Convolução depthwise não passa por im2col nem por matmul. Com `Groups = C`,
+cada grupo viraria uma matmul de uma linha só: o paralelismo por linhas não
+teria o que dividir, e o rearranjo de memória do im2col seria pago sem volume
+que o amortizasse. Medido nesse caminho: **0,86 GFLOPS**.
 
-O resultado está correto — os testes garantem — mas o caminho é errado para
-esse caso. A correção é um kernel dedicado, que desliza o kernel direto sobre
-cada canal e paraleliza por canal. Prevista para a Fase 2, e relevante porque
-depthwise é a operação dominante do MobileFaceNet.
+O kernel dedicado desliza o filtro direto sobre cada canal e paraleliza por
+canal. **10,85 GFLOPS — 12,5× mais rápido.** `Conv2D` reconhece o caso e
+despacha sozinho.
+
+Importa porque MobileFaceNet, o modelo alvo, é feito majoritariamente de
+depthwise.
+
+Com stride 2 o número cai para ~4,9 GFLOPS: a leitura passa a ser espaçada e
+o caminho contíguo rápido não se aplica. Em tempo absoluto ainda é mais barato,
+porque há um quarto das posições de saída para calcular.
 
 ## Testes
 
 ```
-go test ./...              # 69 testes
+go test ./...              # 98 testes
 go test -race ./...        # exige cgo e um compilador C
 go vet ./...
 ```

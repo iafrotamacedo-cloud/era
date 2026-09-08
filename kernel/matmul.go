@@ -9,7 +9,6 @@ package kernel
 import (
 	"fmt"
 	"runtime"
-	"sync"
 )
 
 // Tamanho dos blocos do matmul, em elementos.
@@ -76,23 +75,9 @@ func MatMul(a, b, c []float32, m, k, n int) {
 		return // C = A x B com k=0 e a matriz zero
 	}
 
-	workers := min(numThreads, m)
-	if workers <= 1 {
-		matmulRange(a, b, c, k, n, 0, m)
-		return
-	}
-
-	chunk := (m + workers - 1) / workers
-	var wg sync.WaitGroup
-	for start := 0; start < m; start += chunk {
-		end := min(start+chunk, m)
-		wg.Add(1)
-		go func(s, e int) {
-			defer wg.Done()
-			matmulRange(a, b, c, k, n, s, e)
-		}(start, end)
-	}
-	wg.Wait()
+	parallelFor(m, func(start, end int) {
+		matmulRange(a, b, c, k, n, start, end)
+	})
 }
 
 // matmulRange acumula em C as linhas [rowStart, rowEnd).
@@ -147,21 +132,7 @@ func MatMulAdd(a, b, c []float32, m, k, n int) {
 		panic("kernel: MatMulAdd recebeu buffer pequeno demais")
 	}
 
-	workers := min(numThreads, m)
-	if workers <= 1 {
-		matmulRange(a, b, c, k, n, 0, m)
-		return
-	}
-
-	chunk := (m + workers - 1) / workers
-	var wg sync.WaitGroup
-	for start := 0; start < m; start += chunk {
-		end := min(start+chunk, m)
-		wg.Add(1)
-		go func(s, e int) {
-			defer wg.Done()
-			matmulRange(a, b, c, k, n, s, e)
-		}(start, end)
-	}
-	wg.Wait()
+	parallelFor(m, func(start, end int) {
+		matmulRange(a, b, c, k, n, start, end)
+	})
 }

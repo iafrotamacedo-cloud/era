@@ -163,6 +163,13 @@ func Conv2D(src, weights, bias []float32, outC int, p ConvParams, dst []float32)
 		return fmt.Errorf("kernel: %d canais de saida nao dividem em %d grupos", outC, p.Groups)
 	}
 
+	// Depthwise -- um filtro por canal -- tem kernel proprio. Por im2col ela
+	// viraria C matmuls de uma linha so, o que desliga o paralelismo e paga
+	// o rearranjo de memoria sem ter volume para amortiza-lo. Ver depthwise.go.
+	if p.Groups == p.C && outC == p.C {
+		return DepthwiseConv2D(src, weights, bias, p, dst)
+	}
+
 	oh, ow := p.OutH(), p.OutW()
 	inPerGroup := p.C / p.Groups
 	outPerGroup := outC / p.Groups

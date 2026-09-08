@@ -16,7 +16,7 @@ Não são sistemas. Não têm banco, tela, login nem nuvem.
 |---|---|---|
 | [`faces`](faces/) | reconhecimento facial: imagem → vetor de 512 números | Fase 2 de 7 |
 | [`maps`](maps/) | distâncias e rotas rodoviárias, roteirização | Fase 1 de 7 |
-| [`docs`](docs/) | leitura de documentos | não iniciado |
+| [`documents`](documents/) | leitura de documentos | não iniciado |
 
 Cada motor tem seu próprio README com a arquitetura, os números medidos e o
 roteiro de fases.
@@ -60,7 +60,7 @@ era/
 ├── go.mod          module github.com/iafrotamacedo-cloud/era
 ├── faces/          tensor, kernel, nn, onnx, embed, detect, index
 ├── maps/           geo, dist, osm, graph, ch, geocode, vrp
-└── docs/           a definir
+└── documents/      a definir
 ```
 
 Os caminhos de importação seguem as pastas:

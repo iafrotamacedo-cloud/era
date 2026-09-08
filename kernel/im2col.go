@@ -153,7 +153,23 @@ func Im2Col(src []float32, p ConvParams, dst []float32) {
 //
 // Esta e a funcao que prova o encadeamento: se ela bate com a convolucao
 // ingenua de referencia, entao Tensor, Im2Col e MatMul estao todos certos.
+//
+// Aloca o buffer intermediario do im2col a cada chamada. Numa rede com
+// dezenas de camadas isso vira pressao de coletor de lixo; para esse caso
+// use Conv2DScratch com um buffer reaproveitado.
 func Conv2D(src, weights, bias []float32, outC int, p ConvParams, dst []float32) error {
+	return Conv2DScratch(src, weights, bias, outC, p, dst, nil)
+}
+
+// Conv2DScratch e a Conv2D recebendo o buffer intermediario de fora.
+//
+// scratch precisa ter ao menos p.ColSize() elementos; passe nil para que a
+// funcao aloque um. O conteudo anterior e irrelevante -- o im2col sobrescreve
+// tudo que usa.
+//
+// Existe para quem processa muitas camadas em sequencia e quer alocar uma
+// vez so, em vez de uma vez por camada por imagem.
+func Conv2DScratch(src, weights, bias []float32, outC int, p ConvParams, dst, scratch []float32) error {
 	if err := p.Validate(); err != nil {
 		return err
 	}
@@ -191,7 +207,13 @@ func Conv2D(src, weights, bias []float32, outC int, p ConvParams, dst []float32)
 	gp.C = inPerGroup
 	gp.Groups = 1
 
-	cols := make([]float32, colRows*spatial)
+	need := colRows * spatial
+	var cols []float32
+	if len(scratch) >= need {
+		cols = scratch[:need]
+	} else {
+		cols = make([]float32, need)
+	}
 
 	for g := 0; g < p.Groups; g++ {
 		srcGroup := src[g*inPerGroup*p.H*p.W : (g+1)*inPerGroup*p.H*p.W]

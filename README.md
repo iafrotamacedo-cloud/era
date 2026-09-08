@@ -46,12 +46,12 @@ mesma direção. Comparar identidades vira, então, medir um ângulo.
 
 ## Estado
 
-Fase 1 de 7 concluída.
+Fases 1 e 2 de 7 concluídas.
 
 | Fase | Pacote | Entrega | Estado |
 |---|---|---|---|
 | 1 | `tensor`, `kernel` | tensor N-d, matmul bloqueado, im2col, Conv2D, depthwise | **pronto** |
-| 2 | `nn` | camadas: Conv2D, BatchNorm, PReLU, Linear | — |
+| 2 | `nn` | camadas, workspace reutilizável, fusão de BatchNorm | **pronto** |
 | 3 | `onnx`, `graph` | parser de `.onnx` e executor de grafo | — |
 | 4 | `embed` | ArcFace fim a fim | — |
 | 5 | `detect`, `align` | detecção e alinhamento | — |
@@ -107,10 +107,45 @@ Com stride 2 o número cai para ~4,9 GFLOPS: a leitura passa a ser espaçada e
 o caminho contíguo rápido não se aplica. Em tempo absoluto ainda é mais barato,
 porque há um quarto das posições de saída para calcular.
 
+## Camadas
+
+O pacote `nn` monta as camadas sobre os kernels: `Conv2D`, `BatchNorm`,
+`PReLU`, `ReLU`, `Linear`, `MaxPool2D`, `GlobalAvgPool`, `Flatten`, `Add`
+e `Sequential`.
+
+Duas decisões atravessam o pacote:
+
+**Workspace.** Uma rede tem dezenas de camadas, cada uma produzindo um tensor
+intermediário. Alocar tudo isso por rosto seria pressão de coletor de lixo num
+caminho que roda em milissegundos. O `Workspace` aloca na primeira passagem e
+reaproveita nas seguintes — zero alocação de dados daí em diante. É feito de
+blocos que nunca são realocados, porque um buffer único que crescesse
+invalidaria as fatias já entregues.
+
+Restam ~90 alocações pequenas por passagem (≈4 KB): os slices de forma dos
+tensores. Eliminá-las exigiria um pool de formas; o ganho não paga a
+complexidade por ora.
+
+**Fusão de BatchNorm.** Na inferência, BatchNorm é `y = x*escala + desloc` por
+canal, e os dois cabem dentro dos pesos da convolução anterior:
+
+```
+conv:  y = W*x + b
+bn:    z = y*escala + desloc
+       z = (W*escala)*x + (b*escala + desloc)
+```
+
+`Sequential.Fuse()` faz a absorção e remove a camada. É uma reescrita
+algébrica exata — há teste comparando a rede antes e depois.
+
+O ganho medido é de **~4%**, não mais que isso: BatchNorm custa O(elementos)
+enquanto a convolução custa O(elementos × K² × canais), então a camada
+eliminada já era barata. Vale por ser de graça, não por ser decisiva.
+
 ## Testes
 
 ```
-go test ./...              # 98 testes
+go test ./...              # 146 testes
 go test -race ./...        # exige cgo e um compilador C
 go vet ./...
 ```

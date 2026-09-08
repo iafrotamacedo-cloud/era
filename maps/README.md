@@ -56,23 +56,81 @@ economiza de 15% a 30%.
 
 ## Estado
 
-Fase 1 de 7 concluída.
+Fases 1 e 2 de 7 concluídas.
 
 | Fase | Pacote | Entrega | Estado |
 |---|---|---|---|
 | 1 | `geo` | ponto, haversine, Vincenty, retângulo, índice em grade | **pronto** |
-| 2 | `dist` | interface `Distancer`, cache em disco, fator de desvio | — |
+| 2 | `dist` | interface `Distancer`, cache em disco, fator de desvio | **pronto** |
 | 3 | `protowire`, `osm` | protobuf na mão + leitor de `.osm.pbf` | — |
 | 4 | `graph` | grafo CSR, contração de nós grau 2, Dijkstra bidirecional | — |
 | 5 | `ch` | Contraction Hierarchies, matriz muitos-para-muitos | — |
 | 6 | `geocode` | endereço → ponto: CEP, CNEFE/IBGE, ruas do OSM | — |
 | 7 | `vrp` | Clarke-Wright, 2-opt/Or-opt, capacidade e janela de tempo | — |
 
-A Fase 2 já é útil sozinha: haversine calibrado com o hodômetro da operação
-resolve agrupamento e raio de atendimento enquanto o motor é construído.
-
 A Fase 5 é o marco real: quando a rota calculada aqui bater com a do OSRM em
 ±1%, a tecnologia está reproduzida.
+
+## O que a Fase 2 entrega
+
+A interface que o sistema chamador enxerga, e a primeira implementação dela.
+
+```go
+cal, rep, err := dist.Calibrate(historico)   // hodômetro da operação
+log.Print(rep)                               // erro mediano 4,0%, p90 7,1%
+
+d, _ := dist.NewEstimator(cal)               // implementa dist.Distancer
+leg, _ := d.Distance(ctx, deposito, cliente) // metros e segundos
+m, _ := d.Matrix(ctx, paradas, paradas)      // a matriz do dia
+```
+
+Na Fase 5 o `Estimator` é trocado pelo motor de grafo e nada mais muda.
+
+### O fator de desvio não é uma constante
+
+Distância rodoviária é a linha reta vezes um fator. Esse fator cai conforme a
+distância cresce: ir a duas quadras pode custar seis por causa das mãos
+únicas, atravessar o estado segue a rodovia, que já foi traçada para ser
+curta. Um fator único erra nas duas pontas ao mesmo tempo.
+
+`Calibrate` mede um fator por faixa de distância, com a **mediana** das razões
+— não a média. Histórico real de frota tem motorista que passou na oficina e
+hodômetro digitado errado; a média persegue esses pontos, a mediana os ignora.
+Medido pelos testes, com 5% das viagens corrompidas, o fator se move 0,17%.
+
+Quanto isso vale, sobre viagens que não entraram na calibração:
+
+| | Erro mediano |
+|---|---|
+| Fator genérico | 19,7% |
+| Calibrado, fator único | 11,4% |
+| Calibrado, por faixa | **3,9%** |
+
+`DefaultCalibration` existe para o dia zero e se declara genérica
+(`Generic() == true`), para o sistema poder avisar em vez de fingir precisão
+que não tem.
+
+### O cache não paga contra o `Estimator`
+
+O cache era a otimização óbvia. Os benchmarks disseram outra coisa:
+
+| | Sem cache | Com cache |
+|---|---|---|
+| Consulta individual | 130 ns | **100 ns** |
+| Matriz 500×500 | **10 ms** | 17 ms |
+
+A matriz cacheada perde, e o motivo é estrutural: meio milhão de buscas num
+mapa de 12 MB são meio milhão de idas à memória principal, cada uma mais cara
+que a multiplicação que o `Estimator` faria no lugar. Não há cache que ganhe
+de uma conta de dezenas de nanossegundos.
+
+O cache está escrito para a Fase 5, quando atrás dele estiver uma busca no
+grafo. Com o `Estimator`, use-o para consultas avulsas e deixe as matrizes
+passarem direto.
+
+Isso só apareceu porque o benchmark foi escrito antes da conclusão. A primeira
+versão era ainda 8× pior: travava o mutex uma vez por célula e recalculava a
+chave em cada uma.
 
 ## O que a Fase 1 entrega
 
@@ -149,7 +207,7 @@ repositório só para o teste demonstrar a diferença em vez de a afirmar.
 ## Testes
 
 ```
-go test ./...              # 74 testes
+go test ./...              # 318 testes no repositorio
 go test -race ./...        # exige cgo e um compilador C
 go vet ./...
 ```

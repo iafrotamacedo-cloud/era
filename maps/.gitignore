@@ -1,0 +1,20 @@
+# binarios compilados
+*.exe
+*.dll
+*.so
+*.dylib
+
+# saidas de teste e perfil
+*.test
+*.out
+*.prof
+
+# dados de mapa: nunca versionar, sao centenas de MB e tem licenca propria
+*.pbf
+*.osm
+*.eramap
+dados/
+
+# ambiente
+.env
+.DS_Store

@@ -88,7 +88,12 @@ const (
 // errado -- um dump, um video -- consumiria a RAM da maquina antes de
 // qualquer verificacao de formato. 2 GB e folgado para qualquer modelo de
 // reconhecimento facial; o maior que avaliamos tem 249 MB.
-const tamanhoMaximo = 2 << 30
+//
+// O tipo int64 e explicito de proposito. Sem ele a constante ficaria sem
+// tipo, e ao ser passada para fmt.Errorf assumiria o tipo padrao int -- que
+// em plataformas de 32 bits vai ate 2147483647 e nao comporta este valor.
+// Compila em amd64 e quebra em arm. O CI pegou.
+const tamanhoMaximo int64 = 2 << 30
 
 // Load le um modelo de um arquivo .onnx.
 func Load(caminho string) (*Model, error) {

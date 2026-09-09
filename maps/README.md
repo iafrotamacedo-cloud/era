@@ -56,7 +56,7 @@ economiza de 15% a 30%.
 
 ## Estado
 
-Fases 1 a 4 de 7 concluídas.
+Fases 1 a 5 de 7 concluídas.
 
 | Fase | Pacote | Entrega | Estado |
 |---|---|---|---|
@@ -64,12 +64,97 @@ Fases 1 a 4 de 7 concluídas.
 | 2 | `dist` | interface `Distancer`, cache em disco, fator de desvio | **pronto** |
 | 3 | `protowire`, `osm` | protobuf na mão + leitor de `.osm.pbf` | **pronto** |
 | 4 | `graph` | grafo CSR, contração de nós grau 2, Dijkstra bidirecional | **pronto** |
-| 5 | `ch` | Contraction Hierarchies, matriz muitos-para-muitos | — |
+| 5 | `ch` | Contraction Hierarchies, matriz muitos-para-muitos | **pronto** |
 | 6 | `geocode` | endereço → ponto: CEP, CNEFE/IBGE, ruas do OSM | — |
 | 7 | `vrp` | Clarke-Wright, 2-opt/Or-opt, capacidade e janela de tempo | — |
 
 A Fase 5 é o marco real: quando a rota calculada aqui bater com a do OSRM em
 ±1%, a tecnologia está reproduzida.
+
+## O que a Fase 5 entrega
+
+A hierarquia que faz a consulta deixar de percorrer o mapa.
+
+```go
+c, _ := ch.Prepare(g, graph.Time)      // caro, uma vez só
+custo, ok := c.Cost(de, para)          // microssegundos
+m := c.Matrix(paradas, paradas)        // a matriz do dia
+```
+
+A intuição vem de como alguém descreve um trajeto longo: sai da rua de casa,
+pega uma avenida, entra na rodovia, sai, pega uma avenida, chega. Ninguém
+descreve 300 km rua por rua. As Contraction Hierarchies transformam isso em
+estrutura — cada nó ganha uma posição, e a busca só anda para cima. As duas
+pontas sobem até se encontrarem no cume, e o miolo do mapa nunca é visitado.
+
+### O erro só tem um lado
+
+Decidir se um atalho é necessário exige procurar um caminho alternativo — uma
+testemunha. Essa busca tem limite de saltos, senão o pré-processamento não
+termina.
+
+O limite a torna incompleta, e é aí que mora a propriedade que faz o algoritmo
+funcionar: **não achar uma testemunha que existe cria um atalho desnecessário,
+nunca uma resposta errada.** Medido, no mesmo grafo:
+
+| Limite | Atalhos | Respostas diferentes |
+|---|---|---|
+| 1 salto | 320 | — |
+| 12 saltos | 98 | **nenhuma** |
+
+### Contra o Dijkstra da Fase 4
+
+| | Consulta | Matriz 100×100 |
+|---|---|---|
+| Dijkstra bidirecional | 644 µs | 1.243 ms |
+| Hierarquia | **126 µs** | **9,4 ms** |
+
+5,1× na consulta e 132× na matriz. O ganho da matriz é maior porque o
+algoritmo de baldes faz cada metade da busca uma vez só: os destinos sobem
+deixando bilhetes, as origens sobem recolhendo. O encontro das duas buscas
+deixa de ser procurado e passa a ser encontrado.
+
+Os 5,1× são um **piso**, não o número típico. A medição é numa grade, que é o
+pior caso para a hierarquia: não há rodovia, não há gargalo, todo caminho tem
+mil alternativas equivalentes. Uma malha rodoviária real tem a estrutura que o
+algoritmo explora.
+
+### A cadeia de verificação
+
+O CH é conferido contra o Dijkstra bidirecional da Fase 4, que é conferido
+contra o Dijkstra óbvio do `reference.go`. Vinte e cinco grafos sorteados,
+duas métricas, todos os pares — mais uma grade com mão única onde 2.561 pares
+têm ida diferente da volta.
+
+Os caminhos desempacotados também são verificados rua por rua: um custo certo
+com um caminho impossível seria pior que um erro, porque parece bom.
+
+## O que a Fase 5 ainda não entrega
+
+Duas coisas prometidas em READMEs anteriores **não** foram feitas, e vale
+dizer com todas as letras:
+
+**A comparação com o OSRM.** O texto do roteiro diz que a fase termina quando
+a rota bater com a do OSRM em ±1%. Isso não foi verificado. Exige um extrato
+real e uma instância do OSRM para comparar, e o repositório não guarda dados
+de mapa. O que está verificado é a consistência interna — o CH concorda com um
+Dijkstra que concorda com a implementação óbvia. É uma cadeia sólida, mas não
+é a mesma afirmação.
+
+**O formato `.eramap`.** A serialização do grafo pronto foi prometida nas
+Fases 3 e 4 e não está aqui. Ela importa mais do que parece, porque o preparo
+é caro:
+
+| Nós | Preparo |
+|---|---|
+| 900 | 43 ms |
+| 2.025 | 210 ms |
+| 3.600 | 447 ms |
+| 6.400 | 1,26 s |
+
+Cresce em torno de O(n^1,7). Extrapolando para os ~500 mil cruzamentos de um
+estado, são dezenas de minutos — aceitável uma vez, inaceitável a cada
+partida do processo. Sem `.eramap`, o motor não sobe rápido.
 
 ## O que a Fase 4 entrega
 

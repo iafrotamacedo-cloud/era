@@ -15,7 +15,7 @@ Não são sistemas. Não têm banco, tela, login nem nuvem.
 | Motor | O que faz | Estado |
 |---|---|---|
 | [`faces`](faces/) | reconhecimento facial: imagem → vetor de identidade | Fase 5 de 7 |
-| [`maps`](maps/) | distâncias e rotas rodoviárias, roteirização | Fase 4 de 7 |
+| [`maps`](maps/) | distâncias e rotas rodoviárias, roteirização | Fase 5 de 7 |
 | [`documents`](documents/) | leitura de documentos | não iniciado |
 
 Cada motor tem seu próprio README com a arquitetura, os números medidos e o

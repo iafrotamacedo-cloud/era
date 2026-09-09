@@ -237,11 +237,68 @@ O relatório traz mediana, p90, p99 e pior caso, separando **erro absoluto** de
 piores com as coordenadas na mão, para abrir no mapa — é isso que aponta o que
 consertar; uma mediana não aponta nada.
 
-**Ainda não foi rodado contra um OSRM de verdade**, porque isso exige baixar
-um extrato e subir um container. As instruções estão no cabeçalho do programa.
-Uma expectativa honesta: não vai bater em ±1% de primeira. O OSRM aplica
-penalidade de conversão e restrições de giro que a ERA lê das relações mas
-ainda não usa. O valor da primeira rodada é mostrar **onde** erra.
+### O que a primeira rodada encontrou
+
+Rodado sobre o extrato do Nordeste (421 MB), 149 pares dentro do Ceará, contra
+o servidor público do projeto OSRM.
+
+Primeiro, o grafo real. A previsão do README se confirmou:
+
+```
+1.750.698 de 6.269.993 vias são estrada
+25.026.641 nós de via → 2.916.332 cruzamentos    88,3% contraídos
+3.967.854 trechos, em 29 s, 2,17 GB de heap
+```
+
+O leitor de `.osm.pbf` engoliu 65,7 milhões de nós em 2,2 s — 194 MB/s, quase
+três vezes o que o benchmark sintético media. Dado real comprime melhor que
+dado sorteado.
+
+E a comparação:
+
+| | mediana | p90 | p99 | viés |
+|---|---|---|---|---|
+| **Distância** | **0,39%** | 7,60% | 35,58% | +0,06% |
+| Tempo | 20,68% | 27,16% | 35,76% | −20,68% |
+
+**A distância bate.** Mediana de 0,39% e viés de 0,06% dizem que a construção
+do grafo, a leitura de mão única, a classificação do que é estrada e os
+algoritmos concordam com uma implementação independente. Isso é o que a Fase 5
+prometia verificar.
+
+Com a ressalva de que o alvo do roteiro era ±1% e **isso vale para a mediana,
+não para a distribuição**: um em cada dez pares erra mais de 7%.
+
+### Duas coisas que a rodada mostrou estarem erradas
+
+**O tempo é 21% otimista, sempre para o mesmo lado.** Viés de −20,68% com
+mediana de 20,68% — quase todo par erra na mesma direção. São as velocidades
+genéricas do `graph.Car()`, que não foram medidas em operação nenhuma. O
+próprio código já diz isso, e a saída acordada é o `dist.Calibrate` da Fase 2,
+que mede velocidade efetiva a partir do hodômetro.
+
+**A cauda são estradas de terra.** Investigando o pior caso — 29,7 km aqui
+contra 50,9 km no OSRM — a nossa rota passa por 20 vias `unclassified`, das
+quais 8 têm `surface` de `ground`, `dirt` ou `unpaved`. Estradas de barro do
+sertão, que a ERA percorre a 40 km/h como se fossem asfalto, e por onde o
+OSRM não manda um carro.
+
+A ERA hoje ignora a etiqueta `surface`. Não é erro de algoritmo — é o perfil,
+e é exatamente o tipo de achado que só uma referência externa entrega.
+
+### O erro de método que quase virou diagnóstico errado
+
+A primeira rodada deu mediana de 6,81% com viés de −6,81%: nossas rotas
+sistematicamente mais curtas que as do OSRM. Parecia bug de roteamento.
+
+Não era. Eu pedia ao nosso motor a rota mais **curta** e ao OSRM a rota mais
+**rápida**, que é o padrão dele. Os dois números mediam a diferença entre dois
+objetivos, não entre dois motores. Com as duas pontas minimizando tempo, o
+erro mediano de distância caiu de 6,81% para 0,39%.
+
+Fica o registro porque o número errado era convincente: tinha viés
+consistente, tinha explicação plausível e apontava para um culpado real. O que
+o desmentiu foi olhar o que cada lado estava otimizando.
 
 O programa é o único lugar da ERA que fala HTTP, e ele não é parte do motor —
 verificável com `go list -deps ./maps/geo ./maps/dist ./maps/osm ./maps/graph

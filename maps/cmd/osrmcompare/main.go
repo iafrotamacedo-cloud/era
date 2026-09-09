@@ -14,37 +14,46 @@
 //
 // # Como usar
 //
-// Baixe um extrato e suba um OSRM sobre ele:
+// Baixe um extrato e suba um OSRM sobre ele. A Geofabrik divide o Brasil em
+// cinco regioes, e nao em estados -- o menor recorte que contem o Ceara e o
+// nordeste, com uns 420 MB:
 //
-//	curl -O https://download.geofabrik.de/south-america/brazil/nordeste/ceara-latest.osm.pbf
+//	curl -L -O https://download.geofabrik.de/south-america/brazil/nordeste-latest.osm.pbf
 //
 //	docker run -t -v "${PWD}:/data" osrm/osrm-backend \
-//	    osrm-extract -p /opt/car.lua /data/ceara-latest.osm.pbf
+//	    osrm-extract -p /opt/car.lua /data/nordeste-latest.osm.pbf
 //	docker run -t -v "${PWD}:/data" osrm/osrm-backend \
-//	    osrm-partition /data/ceara-latest.osrm
+//	    osrm-partition /data/nordeste-latest.osrm
 //	docker run -t -v "${PWD}:/data" osrm/osrm-backend \
-//	    osrm-customize /data/ceara-latest.osrm
+//	    osrm-customize /data/nordeste-latest.osrm
 //	docker run -t -i -p 5000:5000 -v "${PWD}:/data" osrm/osrm-backend \
-//	    osrm-routed --algorithm mld /data/ceara-latest.osrm
+//	    osrm-routed --algorithm mld /data/nordeste-latest.osrm
 //
 // E compare, sobre o mesmo extrato:
 //
-//	go run ./maps/cmd/osrmcompare -mapa ceara-latest.osm.pbf -n 500
+//	go run ./maps/cmd/osrmcompare -mapa nordeste-latest.osm.pbf -n 500
 //
 // # Sem instalar nada
 //
 // Da para usar o servidor publico de demonstracao do OSRM em vez de subir um.
 // Ele nao tem SLA e existe para testes, entao va devagar e com poucos pares:
 //
-//	go run ./maps/cmd/osrmcompare -mapa ceara-latest.osm.pbf \
+//	go run ./maps/cmd/osrmcompare -mapa nordeste-latest.osm.pbf \
 //	    -osrm https://router.project-osrm.org \
-//	    -n 150 -paralelo 1 -pausa 300ms
+//	    -n 150 -paralelo 1 -pausa 300ms -sem-hierarquia
 //
 // A ressalva importante: o servidor publico roteia sobre o planeta inteiro, e
 // o grafo daqui foi montado de um recorte. Perto da borda do recorte as duas
 // respostas divergem por um motivo que nao e erro de ninguem -- a nossa malha
-// acaba e a dele nao. Prefira pares no miolo do extrato, e leia os piores
-// casos com isso em mente.
+// acaba e a dele nao. Use -caixa para manter a amostra no miolo do extrato.
+//
+// # Sobre -sem-hierarquia
+//
+// Preparar a hierarquia de um extrato regional leva horas. Ela acelera a
+// consulta e nao muda a resposta -- e os testes garantem que as duas
+// concordam --, entao para conferir o motor contra o OSRM ela nao e
+// necessaria. Com -sem-hierarquia a consulta usa o Dijkstra bidirecional da
+// Fase 4, que nao precisa de preparo nenhum.
 //
 // # O que esperar
 //
@@ -71,6 +80,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -93,6 +103,9 @@ func main() {
 	espera := flag.Duration("espera", 30*time.Second, "tempo limite de cada consulta")
 	pausa := flag.Duration("pausa", 0, "espera entre consultas de cada trabalhador; use contra servidor publico")
 	salvar := flag.String("salvar-eramap", "", "grava a hierarquia preparada neste caminho")
+	semCH := flag.Bool("sem-hierarquia", false, "consulta pelo Dijkstra da Fase 4, sem preparar a hierarquia")
+	metrica := flag.String("metrica", "tempo", "o que minimizar aqui: tempo ou distancia")
+	caixa := flag.String("caixa", "", "limita o sorteio a um retangulo: minLat,minLon,maxLat,maxLon")
 	flag.Parse()
 
 	if *mapa == "" {
@@ -100,14 +113,38 @@ func main() {
 		os.Exit(2)
 	}
 
-	if err := rodar(opcoes{
+	o := opcoes{
 		mapa: *mapa, base: *base, perfil: *perfil,
 		n: *n, semente: *semente,
 		minM: *minKm * 1000, maxM: *maxKm * 1000,
 		encaixeMax: *encaixeMax,
 		paralelo:   *paralelo, espera: *espera, pausa: *pausa,
-		salvar: *salvar,
-	}); err != nil {
+		salvar: *salvar, semCH: *semCH,
+	}
+
+	// O OSRM responde a rota mais rapida; comparar a nossa mais curta com a
+	// mais rapida dele mede a diferenca entre dois objetivos, nao entre dois
+	// motores. Por isso o padrao aqui e tempo.
+	switch *metrica {
+	case "tempo":
+		o.metrica = graph.Time
+	case "distancia":
+		o.metrica = graph.Distance
+	default:
+		fmt.Fprintln(os.Stderr, "erro: -metrica aceita tempo ou distancia")
+		os.Exit(2)
+	}
+
+	if *caixa != "" {
+		b, err := lerCaixa(*caixa)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "erro:", err)
+			os.Exit(2)
+		}
+		o.caixa, o.temCaixa = b, true
+	}
+
+	if err := rodar(o); err != nil {
 		fmt.Fprintln(os.Stderr, "erro:", err)
 		os.Exit(1)
 	}
@@ -123,23 +160,54 @@ type opcoes struct {
 	espera             time.Duration
 	pausa              time.Duration
 	salvar             string
+	semCH              bool
+	caixa              geo.Box
+	temCaixa           bool
+	metrica            graph.Metric
+}
+
+// lerCaixa interpreta "minLat,minLon,maxLat,maxLon".
+//
+// Serve para restringir a amostra a uma regiao dentro do extrato -- so o
+// Ceara dentro do nordeste, por exemplo. Importa quando a referencia e o
+// servidor publico, que roteia sobre o planeta: perto da borda do recorte as
+// duas respostas divergem porque a nossa malha acaba, e nao porque alguem
+// errou.
+func lerCaixa(s string) (geo.Box, error) {
+	var b geo.Box
+	partes := strings.Split(s, ",")
+	if len(partes) != 4 {
+		return b, fmt.Errorf("caixa precisa de quatro numeros: minLat,minLon,maxLat,maxLon")
+	}
+
+	campos := []*float64{&b.MinLat, &b.MinLon, &b.MaxLat, &b.MaxLon}
+	for i, p := range partes {
+		v, err := strconv.ParseFloat(strings.TrimSpace(p), 64)
+		if err != nil {
+			return b, fmt.Errorf("caixa: %q nao e um numero", p)
+		}
+		*campos[i] = v
+	}
+	if b.MinLat >= b.MaxLat || b.MinLon >= b.MaxLon {
+		return b, fmt.Errorf("caixa invertida: %+v", b)
+	}
+	return b, nil
 }
 
 func rodar(o opcoes) error {
-	c, err := carregar(o.mapa, o.salvar)
+	m, err := carregar(o)
 	if err != nil {
 		return err
 	}
-	fmt.Println(c.Stats())
 
-	pares := sortearPares(c, o.n, o.semente, o.minM, o.maxM)
+	pares := sortearPares(m, o)
 	if len(pares) == 0 {
-		return fmt.Errorf("nao consegui sortear nenhum par entre %.0f e %.0f km; ajuste -min-km e -max-km",
+		return fmt.Errorf("nao consegui sortear nenhum par entre %.0f e %.0f km; ajuste -min-km, -max-km ou -caixa",
 			o.minM/1000, o.maxM/1000)
 	}
 	fmt.Printf("comparando %d pares contra %s\n\n", len(pares), o.base)
 
-	rel, err := comparar(c, pares, o)
+	rel, err := comparar(m, pares, o)
 	if err != nil {
 		return err
 	}
@@ -147,35 +215,95 @@ func rodar(o opcoes) error {
 	return nil
 }
 
-// carregar aceita os dois caminhos possiveis: o extrato cru ou a hierarquia
-// ja preparada.
-func carregar(caminho, salvar string) (*ch.CH, error) {
-	if strings.EqualFold(filepath.Ext(caminho), ".eramap") {
-		fmt.Printf("carregando %s\n", caminho)
-		return ch.LoadFile(caminho)
+// motor e o que a comparacao precisa de um mecanismo de rotas.
+//
+// Existe porque a hierarquia nao e obrigatoria para conferir o motor contra o
+// OSRM: ela acelera a consulta, nao muda a resposta, e os testes garantem que
+// as duas concordam. Num extrato regional preparar a hierarquia leva horas, e
+// esperar por ela so para descobrir se uma etiqueta foi lida errado seria
+// pagar caro por nada.
+type motor interface {
+	Len() int
+	Point(graph.NodeID) geo.Point
+	NovaConsulta() consulta
+}
+
+// consulta responde um par. Uma por goroutine.
+type consulta interface {
+	Leg(de, para graph.NodeID) (metros, segundos float64, ok bool)
+}
+
+// motorCH usa a hierarquia da Fase 5.
+type motorCH struct{ c *ch.CH }
+
+func (m motorCH) Len() int                       { return m.c.Len() }
+func (m motorCH) Point(n graph.NodeID) geo.Point { return m.c.Point(n) }
+func (m motorCH) NovaConsulta() consulta         { return m.c.NewQuery() }
+
+// motorGrafo usa o Dijkstra bidirecional da Fase 4.
+type motorGrafo struct {
+	g *graph.Graph
+	m graph.Metric
+}
+
+func (m motorGrafo) Len() int                       { return m.g.Len() }
+func (m motorGrafo) Point(n graph.NodeID) geo.Point { return m.g.Point(n) }
+func (m motorGrafo) NovaConsulta() consulta {
+	return consultaGrafo{s: m.g.NewSearcher(), m: m.m}
+}
+
+type consultaGrafo struct {
+	s *graph.Searcher
+	m graph.Metric
+}
+
+func (c consultaGrafo) Leg(de, para graph.NodeID) (float64, float64, bool) {
+	p, ok := c.s.Route(de, para, c.m)
+	if !ok {
+		return 0, 0, false
+	}
+	return p.Meters, p.Seconds, true
+}
+
+// carregar monta o motor a partir do que foi pedido.
+func carregar(o opcoes) (motor, error) {
+	if strings.EqualFold(filepath.Ext(o.mapa), ".eramap") {
+		fmt.Printf("carregando %s\n", o.mapa)
+		c, err := ch.LoadFile(o.mapa)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Println(c.Stats())
+		return motorCH{c}, nil
 	}
 
-	fmt.Printf("montando o grafo de %s\n", caminho)
+	fmt.Printf("montando o grafo de %s\n", o.mapa)
 	inicio := time.Now()
-	g, err := graph.BuildFile(caminho, graph.Car())
+	g, err := graph.BuildFile(o.mapa, graph.Car())
 	if err != nil {
 		return nil, err
 	}
 	fmt.Printf("%s, em %s\n", g.Stats(), time.Since(inicio).Round(time.Millisecond))
 
-	fmt.Println("preparando a hierarquia (isto demora)")
-	c, err := ch.Prepare(g, graph.Distance)
+	if o.semCH {
+		fmt.Printf("consultando pelo Dijkstra da Fase 4, minimizando %v\n", o.metrica)
+		return motorGrafo{g: g, m: o.metrica}, nil
+	}
+
+	fmt.Println("preparando a hierarquia (isto demora; use -sem-hierarquia para pular)")
+	c, err := ch.Prepare(g, o.metrica)
 	if err != nil {
 		return nil, err
 	}
+	fmt.Println(c.Stats())
 
-	if salvar != "" {
-		if err := c.SaveFile(salvar); err != nil {
+	if o.salvar != "" {
+		if err := c.SaveFile(o.salvar); err != nil {
 			return nil, fmt.Errorf("gravando o eramap: %w", err)
 		}
-		fmt.Printf("hierarquia gravada em %s\n", salvar)
+		fmt.Printf("hierarquia gravada em %s\n", o.salvar)
 	}
-	return c, nil
+	return motorCH{c}, nil
 }
 
 type par struct{ de, para graph.NodeID }
@@ -188,21 +316,25 @@ type par struct{ de, para graph.NodeID }
 // coordenadas que ja sao de cruzamentos, o OSRM encaixa praticamente no mesmo
 // lugar -- e o quanto ele se afastou vem na resposta, para os pares em que
 // isso nao valeu serem descartados.
-func sortearPares(c *ch.CH, quantos int, semente int64, minM, maxM float64) []par {
-	r := rand.New(rand.NewSource(semente))
-	pares := make([]par, 0, quantos)
+func sortearPares(m motor, o opcoes) []par {
+	r := rand.New(rand.NewSource(o.semente))
+	pares := make([]par, 0, o.n)
 
-	// Um teto de tentativas: num extrato recortado pode simplesmente nao
-	// haver pares na faixa pedida, e o programa precisa dizer isso em vez de
-	// girar para sempre.
-	for tentativas := 0; len(pares) < quantos && tentativas < quantos*200; tentativas++ {
-		de := graph.NodeID(r.Intn(c.Len()))
-		para := graph.NodeID(r.Intn(c.Len()))
-		if de == para {
+	dentro := func(n graph.NodeID) bool {
+		return !o.temCaixa || o.caixa.Contains(m.Point(n))
+	}
+
+	// Um teto de tentativas: num extrato recortado, ou com uma caixa
+	// apertada, pode simplesmente nao haver pares na faixa pedida, e o
+	// programa precisa dizer isso em vez de girar para sempre.
+	for tentativas := 0; len(pares) < o.n && tentativas < o.n*500; tentativas++ {
+		de := graph.NodeID(r.Intn(m.Len()))
+		para := graph.NodeID(r.Intn(m.Len()))
+		if de == para || !dentro(de) || !dentro(para) {
 			continue
 		}
-		reta := geo.Haversine(c.Point(de), c.Point(para))
-		if reta < minM || reta > maxM {
+		reta := geo.Haversine(m.Point(de), m.Point(para))
+		if reta < o.minM || reta > o.maxM {
 			continue
 		}
 		pares = append(pares, par{de, para})
@@ -210,7 +342,7 @@ func sortearPares(c *ch.CH, quantos int, semente int64, minM, maxM float64) []pa
 	return pares
 }
 
-func comparar(c *ch.CH, pares []par, o opcoes) (*Relatorio, error) {
+func comparar(mot motor, pares []par, o opcoes) (*Relatorio, error) {
 	cliente := &Cliente{
 		Base:   o.base,
 		Perfil: o.perfil,
@@ -218,10 +350,10 @@ func comparar(c *ch.CH, pares []par, o opcoes) (*Relatorio, error) {
 	}
 
 	// Uma consulta antes de tudo, em serie, para falhar cedo e com mensagem
-	// clara se o OSRM nao estiver de pe. Descobrir isso depois de 200
+	// clara se o OSRM nao estiver de pe. Descobrir isso depois de duzentas
 	// goroutines terem falhado daria uma pilha de erros iguais.
 	ctx := context.Background()
-	if _, err := cliente.Rota(ctx, c.Point(pares[0].de), c.Point(pares[0].para)); err != nil {
+	if _, err := cliente.Rota(ctx, mot.Point(pares[0].de), mot.Point(pares[0].para)); err != nil {
 		var semRota ErrSemRota
 		if !errors.As(err, &semRota) {
 			return nil, fmt.Errorf("o osrm em %s nao respondeu: %w", o.base, err)
@@ -241,10 +373,10 @@ func comparar(c *ch.CH, pares []par, o opcoes) (*Relatorio, error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			q := c.NewQuery()
+			q := mot.NovaConsulta()
 
 			for p := range trabalho {
-				de, para := c.Point(p.de), c.Point(p.para)
+				de, para := mot.Point(p.de), mot.Point(p.para)
 
 				metros, segundos, achou := q.Leg(p.de, p.para)
 				resp, err := cliente.Rota(ctx, de, para)

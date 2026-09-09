@@ -56,13 +56,13 @@ economiza de 15% a 30%.
 
 ## Estado
 
-Fases 1 e 2 de 7 concluídas.
+Fases 1, 2 e 3 de 7 concluídas.
 
 | Fase | Pacote | Entrega | Estado |
 |---|---|---|---|
 | 1 | `geo` | ponto, haversine, Vincenty, retângulo, índice em grade | **pronto** |
 | 2 | `dist` | interface `Distancer`, cache em disco, fator de desvio | **pronto** |
-| 3 | `protowire`, `osm` | protobuf na mão + leitor de `.osm.pbf` | — |
+| 3 | `protowire`, `osm` | protobuf na mão + leitor de `.osm.pbf` | **pronto** |
 | 4 | `graph` | grafo CSR, contração de nós grau 2, Dijkstra bidirecional | — |
 | 5 | `ch` | Contraction Hierarchies, matriz muitos-para-muitos | — |
 | 6 | `geocode` | endereço → ponto: CEP, CNEFE/IBGE, ruas do OSM | — |
@@ -70,6 +70,79 @@ Fases 1 e 2 de 7 concluídas.
 
 A Fase 5 é o marco real: quando a rota calculada aqui bater com a do OSRM em
 ±1%, a tecnologia está reproduzida.
+
+## O que a Fase 3 entrega
+
+O leitor de `.osm.pbf` — o formato binário em que o OpenStreetMap distribui
+extratos. Lê e só: não monta grafo, não filtra estrada, não sabe o que é uma
+rua. Mesmo corte que o `faces` faz entre `onnx`, que lê o modelo, e `graph`,
+que o executa.
+
+```go
+osm.Scan(f, osm.Handler{
+    Way: func(w osm.Way) error {
+        if _, ok := w.Tags.Get("highway"); ok { ... }
+        return nil
+    },
+})
+```
+
+O `internal/protowire` já existia — foi escrito pelo `faces` para ler `.onnx`,
+e inclui o zigzag que o ONNX **não** usa e o `.osm.pbf` usa em toda diferença
+de coordenada. Era a aposta do monorepo, e ela pagou: a Fase 3 do `maps` foi
+só o esquema por cima.
+
+### `nil` no handler quer dizer "não decodifique"
+
+`Handler` é um struct de funções, não uma interface. A diferença é que um
+campo `nil` significa pular, e o leitor nunca toca nos `DenseNodes` — que são
+a maior parte do arquivo.
+
+Isso importa porque montar um grafo exige duas passadas: primeiro as vias,
+para saber quais nós importam; depois esses nós. Medido, sobre o mesmo
+arquivo:
+
+| | Tempo | Entrada |
+|---|---|---|
+| Tudo | 16,8 ms | 71 MB/s |
+| Só vias (`Node` nil) | **11,8 ms** | 102 MB/s |
+| Nada (handler vazio) | 7,3 ms | 164 MB/s |
+
+13,1 milhões de entidades por segundo na leitura completa, num i7-9750H.
+
+### Paralelo por dentro, ordenado por fora
+
+Os blocos são independentes e o `inflate` é caro, então a decodificação é
+paralela. Mas os callbacks são chamados de uma goroutine só, na ordem do
+arquivo: o handler não precisa se preocupar com concorrência, e duas leituras
+do mesmo arquivo produzem a mesma sequência.
+
+Isso tem um preço, e ele foi medido em vez de estimado:
+
+| | 1 trabalhador | 8 trabalhadores | Ganho |
+|---|---|---|---|
+| Só o envelope | 43,7 ms | 22,5 ms | 1,95× |
+| Leitura completa | 75,1 ms | 51,5 ms | 1,46× |
+
+A parte paralela escala. O teto é a entrega serial — cerca de 26 ns por
+entidade. Foi uma troca deliberada: um handler que precisasse ser seguro para
+concorrência empurraria essa complexidade para todo mundo que usa a
+biblioteca. Se a Fase 4 esbarrar nesse teto, a saída é uma variante que
+entregue lotes em vez de uma entidade por vez.
+
+### Falhar alto
+
+Um mapa lido pela metade em silêncio vira rota errada, e rota errada em
+logística vira caminhão no lugar errado. Então o leitor recusa, com erro
+nomeado: arquivo que exige capacidade não implementada, compressão que a ERA
+não tem (lzma, lz4, zstd — todas exigiriam dependência), arquivo truncado,
+granularidade zero, índice de tabela apontando para o vazio, listas de
+tamanhos diferentes, tipo de membro que não existe.
+
+Como o repositório não guarda dados de mapa, os testes **escrevem** os
+`.osm.pbf` que leem. A vantagem escondida é que dá para produzir arquivos que
+não existiriam naturalmente — é assim que cada uma dessas recusas é
+verificada.
 
 ## O que a Fase 2 entrega
 

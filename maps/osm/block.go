@@ -32,6 +32,23 @@ type bloco struct {
 	// ela: as strings da tabela sao copias, e as etiquetas apontam para a
 	// tabela.
 	descomp []byte
+
+	// Rascunho das listas intermediarias do protobuf: chaves, valores,
+	// identificadores e coordenadas antes de virarem entidade.
+	//
+	// Ficam aqui pelo mesmo motivo dos outros buffers. Declaradas dentro das
+	// funcoes de decodificacao, custavam duas alocacoes por via e tres listas
+	// de 8.000 inteiros por bloco denso -- o suficiente para o coletor de lixo
+	// virar o limite do paralelismo.
+	chaves        []int32
+	valores       []int32
+	chavesValores []int32
+	ids           []int64
+	lats          []int64
+	lons          []int64
+	papeis        []int32
+	tipos         []int32
+	memids        []int64
 }
 
 func (b *bloco) limpar() {
@@ -239,10 +256,10 @@ func decodificarGrupo(buf []byte, h *Handler, b *bloco, esc escala) error {
 // comum.
 func decodificarNo(r *protowire.Reader, b *bloco, esc escala) error {
 	var (
-		n               Node
-		chaves, valores []int32
-		lat, lon        int64
+		n        Node
+		lat, lon int64
 	)
+	chaves, valores := b.chaves[:0], b.valores[:0]
 
 	for !r.Done() {
 		campo, typ, err := r.Tag()
@@ -253,9 +270,9 @@ func decodificarNo(r *protowire.Reader, b *bloco, esc escala) error {
 		case 1:
 			n.ID, err = r.SInt64()
 		case 2:
-			chaves, err = lerInt32Empacotados(r, typ, chaves[:0])
+			chaves, err = lerInt32Empacotados(r, typ, chaves)
 		case 3:
-			valores, err = lerInt32Empacotados(r, typ, valores[:0])
+			valores, err = lerInt32Empacotados(r, typ, valores)
 		case 8:
 			lat, err = r.SInt64()
 		case 9:
@@ -289,6 +306,7 @@ func decodificarNo(r *protowire.Reader, b *bloco, esc escala) error {
 	n.Point = esc.ponto(lat, lon)
 	n.Tags = b.tags[inicio:len(b.tags):len(b.tags)]
 	b.nos = append(b.nos, n)
+	b.chaves, b.valores = chaves, valores
 	return nil
 }
 
@@ -305,8 +323,8 @@ func decodificarNo(r *protowire.Reader, b *bloco, esc escala) error {
 // zero, chave, valor, zero -- em que o zero separa um no do proximo. Nos sem
 // etiqueta nenhuma, que sao a maioria, nao ocupam nada alem do seu zero.
 func decodificarDensos(r *protowire.Reader, b *bloco, esc escala) error {
-	var ids, lats, lons []int64
-	var chavesValores []int32
+	ids, lats, lons := b.ids[:0], b.lats[:0], b.lons[:0]
+	chavesValores := b.chavesValores[:0]
 
 	for !r.Done() {
 		campo, typ, err := r.Tag()
@@ -370,14 +388,14 @@ func decodificarDensos(r *protowire.Reader, b *bloco, esc escala) error {
 
 		b.nos = append(b.nos, n)
 	}
+
+	b.ids, b.lats, b.lons, b.chavesValores = ids, lats, lons, chavesValores
 	return nil
 }
 
 func decodificarVia(r *protowire.Reader, b *bloco) error {
-	var (
-		w               Way
-		chaves, valores []int32
-	)
+	var w Way
+	chaves, valores := b.chaves[:0], b.valores[:0]
 
 	inicioRefs := len(b.refs)
 
@@ -390,9 +408,9 @@ func decodificarVia(r *protowire.Reader, b *bloco) error {
 		case 1:
 			w.ID, err = r.Int64()
 		case 2:
-			chaves, err = lerInt32Empacotados(r, typ, chaves[:0])
+			chaves, err = lerInt32Empacotados(r, typ, chaves)
 		case 3:
-			valores, err = lerInt32Empacotados(r, typ, valores[:0])
+			valores, err = lerInt32Empacotados(r, typ, valores)
 		case 8: // refs, tambem por diferenca
 			b.refs, err = lerSInt64Empacotados(r, typ, b.refs)
 		default:
@@ -430,17 +448,15 @@ func decodificarVia(r *protowire.Reader, b *bloco) error {
 	w.Tags = b.tags[inicioTags:len(b.tags):len(b.tags)]
 
 	b.vias = append(b.vias, w)
+	b.chaves, b.valores = chaves, valores
 	return nil
 }
 
 func decodificarRelacao(r *protowire.Reader, b *bloco) error {
-	var (
-		rel             Relation
-		chaves, valores []int32
-		papeis          []int32
-		memids          []int64
-		tipos           []int32
-	)
+	var rel Relation
+	chaves, valores := b.chaves[:0], b.valores[:0]
+	papeis, tipos := b.papeis[:0], b.tipos[:0]
+	memids := b.memids[:0]
 
 	for !r.Done() {
 		campo, typ, err := r.Tag()
@@ -451,15 +467,15 @@ func decodificarRelacao(r *protowire.Reader, b *bloco) error {
 		case 1:
 			rel.ID, err = r.Int64()
 		case 2:
-			chaves, err = lerInt32Empacotados(r, typ, chaves[:0])
+			chaves, err = lerInt32Empacotados(r, typ, chaves)
 		case 3:
-			valores, err = lerInt32Empacotados(r, typ, valores[:0])
+			valores, err = lerInt32Empacotados(r, typ, valores)
 		case 8: // roles_sid
-			papeis, err = lerInt32Empacotados(r, typ, papeis[:0])
+			papeis, err = lerInt32Empacotados(r, typ, papeis)
 		case 9: // memids, por diferenca
-			memids, err = lerSInt64Empacotados(r, typ, memids[:0])
+			memids, err = lerSInt64Empacotados(r, typ, memids)
 		case 10: // types
-			tipos, err = lerInt32Empacotados(r, typ, tipos[:0])
+			tipos, err = lerInt32Empacotados(r, typ, tipos)
 		default:
 			err = r.Skip(typ)
 		}
@@ -512,6 +528,8 @@ func decodificarRelacao(r *protowire.Reader, b *bloco) error {
 	rel.Tags = b.tags[inicioTags:len(b.tags):len(b.tags)]
 
 	b.relacoes = append(b.relacoes, rel)
+	b.chaves, b.valores = chaves, valores
+	b.papeis, b.tipos, b.memids = papeis, tipos, memids
 	return nil
 }
 

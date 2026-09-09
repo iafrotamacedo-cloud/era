@@ -31,6 +31,21 @@
 //
 //	go run ./maps/cmd/osrmcompare -mapa ceara-latest.osm.pbf -n 500
 //
+// # Sem instalar nada
+//
+// Da para usar o servidor publico de demonstracao do OSRM em vez de subir um.
+// Ele nao tem SLA e existe para testes, entao va devagar e com poucos pares:
+//
+//	go run ./maps/cmd/osrmcompare -mapa ceara-latest.osm.pbf \
+//	    -osrm https://router.project-osrm.org \
+//	    -n 150 -paralelo 1 -pausa 300ms
+//
+// A ressalva importante: o servidor publico roteia sobre o planeta inteiro, e
+// o grafo daqui foi montado de um recorte. Perto da borda do recorte as duas
+// respostas divergem por um motivo que nao e erro de ninguem -- a nossa malha
+// acaba e a dele nao. Prefira pares no miolo do extrato, e leia os piores
+// casos com isso em mente.
+//
 // # O que esperar
 //
 // Nao vai bater em um por cento de primeira, e o valor da primeira rodada e
@@ -76,6 +91,7 @@ func main() {
 	encaixeMax := flag.Float64("encaixe-max", 30, "descarta o par se o OSRM encaixar a mais de tantos metros")
 	paralelo := flag.Int("paralelo", 4, "consultas simultaneas ao OSRM")
 	espera := flag.Duration("espera", 30*time.Second, "tempo limite de cada consulta")
+	pausa := flag.Duration("pausa", 0, "espera entre consultas de cada trabalhador; use contra servidor publico")
 	salvar := flag.String("salvar-eramap", "", "grava a hierarquia preparada neste caminho")
 	flag.Parse()
 
@@ -89,7 +105,7 @@ func main() {
 		n: *n, semente: *semente,
 		minM: *minKm * 1000, maxM: *maxKm * 1000,
 		encaixeMax: *encaixeMax,
-		paralelo:   *paralelo, espera: *espera,
+		paralelo:   *paralelo, espera: *espera, pausa: *pausa,
 		salvar: *salvar,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, "erro:", err)
@@ -105,6 +121,7 @@ type opcoes struct {
 	encaixeMax         float64
 	paralelo           int
 	espera             time.Duration
+	pausa              time.Duration
 	salvar             string
 }
 
@@ -231,6 +248,9 @@ func comparar(c *ch.CH, pares []par, o opcoes) (*Relatorio, error) {
 
 				metros, segundos, achou := q.Leg(p.de, p.para)
 				resp, err := cliente.Rota(ctx, de, para)
+				if o.pausa > 0 {
+					time.Sleep(o.pausa)
+				}
 
 				mu.Lock()
 				switch {

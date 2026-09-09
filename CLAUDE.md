@@ -5,9 +5,9 @@ Monorepo de motores em Go puro. Três motores independentes sob um `go.mod`:
 | Diretório | Motor | Estado |
 |---|---|---|
 | `faces/` | reconhecimento facial | Fase 5 de 7 |
-| `maps/` | distâncias e rotas rodoviárias | Fase 2 de 7 |
+| `maps/` | distâncias e rotas rodoviárias | Fase 3 de 7 |
 | `documents/` | leitura de documentos | não iniciado |
-| `internal/protowire/` | protobuf compartilhado — `faces` lê `.onnx`, `maps` lerá `.osm.pbf` | pronto |
+| `internal/protowire/` | protobuf compartilhado — `faces` lê `.onnx`, `maps` lê `.osm.pbf` | pronto |
 
 `docs/` é documentação, não código. O motor de documentos é `documents/`.
 

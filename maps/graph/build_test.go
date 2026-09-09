@@ -195,12 +195,17 @@ func ruaReta(idBase int64, n int, lat float64) ([]noTeste, []int64) {
 
 func montar(t *testing.T, nos []noTeste, vias []viaTeste) *Graph {
 	t.Helper()
+	return montarCom(t, nos, vias, Car())
+}
+
+func montarCom(t *testing.T, nos []noTeste, vias []viaTeste, p Profile) *Graph {
+	t.Helper()
 	var a arquivo
 	a.cabecalho()
 	a.nos(nos)
 	a.vias(vias)
 
-	g, err := Build(bytes.NewReader(a.buf.Bytes()), Car())
+	g, err := Build(bytes.NewReader(a.buf.Bytes()), p)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -491,5 +496,115 @@ func TestBuildRecusaPerfilVazio(t *testing.T) {
 func TestBuildPropagaErroDeLeitura(t *testing.T) {
 	if _, err := Build(bytes.NewReader([]byte("nao sou um osm.pbf")), Car()); err == nil {
 		t.Error("arquivo invalido deveria virar erro")
+	}
+}
+
+// A superficie reduz a velocidade e nao mexe na distancia. Barro nao encurta
+// nem alonga a estrada -- so muda quanto tempo ela custa.
+func TestSuperficieMudaOTempoENaoADistancia(t *testing.T) {
+	// unclassified anda a 40 km/h. O teto so morde quando e menor que isso --
+	// e por isso que compacted, cujo teto e 50, nao muda nada. Um teto que
+	// virasse multiplicador quebraria esse caso.
+	casos := []struct {
+		nome string
+		tags map[string]string
+		kmh  float64
+	}{
+		{"sem etiqueta", map[string]string{"highway": "unclassified"}, 40},
+		{"asfalto", map[string]string{"highway": "unclassified", "surface": "asphalt"}, 40},
+		{"compactada, teto acima da classe", map[string]string{"highway": "unclassified", "surface": "compacted"}, 40},
+		{"terra", map[string]string{"highway": "unclassified", "surface": "dirt"}, 25},
+		{"areia", map[string]string{"highway": "unclassified", "surface": "sand"}, 15},
+		{"paralelepipedo", map[string]string{"highway": "unclassified", "surface": "cobblestone"}, 30},
+		{"valor desconhecido", map[string]string{"highway": "unclassified", "surface": "marte"}, 40},
+		{"tracktype no lugar de surface", map[string]string{"highway": "unclassified", "tracktype": "grade4"}, 25},
+		{"surface vence tracktype", map[string]string{"highway": "unclassified", "surface": "asphalt", "tracktype": "grade5"}, 40},
+	}
+
+	var referencia Path
+	for i, caso := range casos {
+		nos, refs := ruaReta(1, 3, -3.7)
+		g := montar(t, nos, []viaTeste{{id: 1, refs: refs, tags: caso.tags}})
+
+		p, ok := g.Route(0, 1, Distance)
+		if !ok {
+			t.Fatalf("%s: sem rota", caso.nome)
+		}
+		if i == 0 {
+			referencia = p
+			continue
+		}
+
+		if math.Abs(p.Meters-referencia.Meters) > 1e-6 {
+			t.Errorf("%s: a distancia mudou, %.3f contra %.3f", caso.nome, p.Meters, referencia.Meters)
+		}
+
+		// Menor velocidade e mais tempo, na proporcao das duas velocidades.
+		querido := referencia.Seconds * (40 / caso.kmh)
+		if math.Abs(p.Seconds-querido) > 1e-3*querido {
+			t.Errorf("%s: %.2f s, esperado %.2f s (teto %.0f km/h)", caso.nome, p.Seconds, querido, caso.kmh)
+		}
+	}
+}
+
+// O motivo pelo qual isto existe: com a superficie no perfil, a rota mais
+// rapida passa a preferir o desvio pelo asfalto -- que e o que o motorista
+// faz.
+func TestAsfaltoGanhaDoBarroNoTempo(t *testing.T) {
+	// Dois caminhos entre os nos 1 e 4, ambos unclassified: o unico que muda
+	// entre eles e a superficie.
+	//
+	//   curto, de terra:  1 - 2 - 4
+	//   longo, asfaltado: 1 - 3 - 4, com um desvio para o norte
+	//
+	// A classe da via precisa ser a mesma nos dois, senao a velocidade base ja
+	// decide sozinha e o teste nao prova nada sobre superficie.
+	nos := []noTeste{
+		{id: 1, p: geo.Point{Lat: -3.700, Lon: -38.500}},
+		{id: 2, p: geo.Point{Lat: -3.700, Lon: -38.490}},
+		{id: 3, p: geo.Point{Lat: -3.690, Lon: -38.495}},
+		{id: 4, p: geo.Point{Lat: -3.700, Lon: -38.480}},
+	}
+	vias := []viaTeste{
+		{id: 1, refs: []int64{1, 2, 4}, tags: map[string]string{"highway": "unclassified", "surface": "dirt"}},
+		{id: 2, refs: []int64{1, 3}, tags: map[string]string{"highway": "unclassified", "surface": "asphalt"}},
+		{id: 3, refs: []int64{3, 4}, tags: map[string]string{"highway": "unclassified", "surface": "asphalt"}},
+	}
+	g := montar(t, nos, vias)
+
+	de, _, _ := g.Nearest(nos[0].p)
+	para, _, _ := g.Nearest(nos[3].p)
+
+	curto, ok := g.Route(de, para, Distance)
+	if !ok {
+		t.Fatal("sem rota por distancia")
+	}
+	rapido, ok := g.Route(de, para, Time)
+	if !ok {
+		t.Fatal("sem rota por tempo")
+	}
+
+	if curto.Meters >= rapido.Meters {
+		t.Errorf("a rota de terra deveria ser a mais curta: %.0f m contra %.0f m",
+			curto.Meters, rapido.Meters)
+	}
+	if rapido.Seconds >= curto.Seconds {
+		t.Errorf("o asfalto deveria ser mais rapido: %.1f s contra %.1f s",
+			rapido.Seconds, curto.Seconds)
+	}
+
+	// Sem penalidade de superficie o barro venceria tambem no tempo, porque e
+	// mais curto. E o teste que prova que a mudanca faz alguma coisa.
+	semSuperficie := Car()
+	semSuperficie.SurfaceMaxKmh = nil
+	g2 := montarCom(t, nos, vias, semSuperficie)
+	de2, _, _ := g2.Nearest(nos[0].p)
+	para2, _, _ := g2.Nearest(nos[3].p)
+	antes, ok := g2.Route(de2, para2, Time)
+	if !ok {
+		t.Fatal("sem rota sem superficie")
+	}
+	if antes.Meters >= rapido.Meters {
+		t.Error("sem penalidade de superficie a rota mais rapida deveria ser a de terra")
 	}
 }

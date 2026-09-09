@@ -269,22 +269,40 @@ prometia verificar.
 Com a ressalva de que o alvo do roteiro era ±1% e **isso vale para a mediana,
 não para a distribuição**: um em cada dez pares erra mais de 7%.
 
-### Duas coisas que a rodada mostrou estarem erradas
+### O que a rodada mostrou estar errado
 
-**O tempo é 21% otimista, sempre para o mesmo lado.** Viés de −20,68% com
-mediana de 20,68% — quase todo par erra na mesma direção. São as velocidades
-genéricas do `graph.Car()`, que não foram medidas em operação nenhuma. O
-próprio código já diz isso, e a saída acordada é o `dist.Calibrate` da Fase 2,
-que mede velocidade efetiva a partir do hodômetro.
+**A cauda eram estradas de terra.** Investigando o pior caso — 29,7 km aqui
+contra 50,9 km no OSRM — a nossa rota passava por 20 vias `unclassified`, das
+quais 8 com `surface` de `ground`, `dirt` ou `unpaved`. Estradas de barro do
+sertão, percorridas a 40 km/h como se fossem asfalto.
 
-**A cauda são estradas de terra.** Investigando o pior caso — 29,7 km aqui
-contra 50,9 km no OSRM — a nossa rota passa por 20 vias `unclassified`, das
-quais 8 têm `surface` de `ground`, `dirt` ou `unpaved`. Estradas de barro do
-sertão, que a ERA percorre a 40 km/h como se fossem asfalto, e por onde o
-OSRM não manda um carro.
+Foi corrigido, e a correção precisou de duas tentativas:
 
-A ERA hoje ignora a etiqueta `surface`. Não é erro de algoritmo — é o perfil,
-e é exatamente o tipo de achado que só uma referência externa entrega.
+| | Sem `surface` | Multiplicador | **Teto** |
+|---|---|---|---|
+| Distância, mediana | 0,39% | 0,48% | **0,36%** |
+| Distância, p90 | 7,60% | 7,70% | **6,84%** |
+| Distância, pior | −41,6% | +48,3% | **−37,3%** |
+| Tempo, mediana | 20,68% | 18,94% | 19,81% |
+
+A primeira versão multiplicava a velocidade por um fator. Melhorou o tempo e
+**piorou a distância**, com um caso novo de +48%: fugindo do barro por um
+desvio de 77 km no asfalto onde o OSRM fazia 52. Penalidade demais.
+
+O erro era o modelo, não os números. Estrada de barro é lenta em termos
+absolutos, não em proporção à classe da via — um `primary` de terra não anda a
+70% de 70, anda a velocidade de estrada de terra. Trocado por **teto**, todos
+os percentis de distância melhoraram e o caso de +48% sumiu.
+
+Vale saber o que isso não resolve: **a maioria das vias do interior não tem a
+etiqueta.** Na rota que motivou a mudança, 26 de 49 vias vinham sem `surface`.
+O `tracktype` é lido como substituto quando existe, mas para o resto nada muda.
+
+**O tempo continua 21% otimista, sempre para o mesmo lado.** Viés de −19,8%
+com mediana de 19,8% — quase todo par erra na mesma direção. São as
+velocidades genéricas do `graph.Car()`, que não foram medidas em operação
+nenhuma. Não é problema de etiqueta: é calibração, e a saída acordada é o
+`dist.Calibrate` da Fase 2, que mede velocidade efetiva a partir do hodômetro.
 
 ### O erro de método que quase virou diagnóstico errado
 

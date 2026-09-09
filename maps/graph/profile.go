@@ -32,6 +32,30 @@ type Profile struct {
 	// Bloqueadas sao pares chave=valor que excluem a via, mesmo que o tipo
 	// dela esteja em SpeedKmh.
 	Bloqueadas map[string]string
+
+	// SurfaceMaxKmh limita a velocidade conforme a etiqueta surface.
+	//
+	// Teto, e nao multiplicador. A primeira versao multiplicava, e a
+	// comparacao com o OSRM mostrou o erro: um unclassified de terra virava
+	// 40 x 0,45 = 18 km/h, e a rota fugia do barro por um desvio de 77 km no
+	// asfalto onde o OSRM fazia 52. Estrada de barro e lenta em termos
+	// absolutos, nao em proporcao a classe da via -- um primary de terra nao
+	// anda a 70% de 70, anda a velocidade de estrada de terra.
+	//
+	// Reduz a velocidade em vez de excluir a via, e isso e uma decisao sobre
+	// logistica no Brasil, nao sobre o formato: no sertao a estrada de barro
+	// as vezes e o unico caminho ate o cliente. Tirar essas vias do grafo
+	// faria a roteirizacao dizer que nao ha rota para lugares onde os
+	// caminhoes chegam todo dia.
+	//
+	// O efeito aparece no tempo, nao na distancia -- barro nao encurta nem
+	// alonga a estrada. Mas e o tempo que a busca minimiza numa roteirizacao
+	// de verdade, e com isso o desvio pelo asfalto ganha quando compensa, e so
+	// quando compensa.
+	//
+	// Um valor de surface que nao esteja aqui, ou a ausencia da etiqueta, nao
+	// muda nada.
+	SurfaceMaxKmh map[string]float64
 }
 
 // Car devolve o perfil de carro de passeio.
@@ -64,10 +88,61 @@ func Car() Profile {
 			"highway":  "motorway",
 		},
 		Bloqueadas: map[string]string{
+			// So um valor por chave: Bloqueadas e map[string]string. Fica de
+			// fora access=no, que tambem deveria bloquear -- para os dois
+			// caberem, o campo precisa virar map[string][]string, e isso e
+			// outra mudanca.
 			"access":        "private",
 			"motor_vehicle": "no",
 			"area":          "yes",
 		},
+		SurfaceMaxKmh: superficiesCarro(),
+	}
+}
+
+// superficiesCarro devolve o teto de velocidade por superficie.
+//
+// Vieram da comparacao com o OSRM sobre o Nordeste, em duas rodadas. A
+// primeira mostrou a ERA cortando caminho por estradas de barro do sertao a
+// 40 km/h, como se fossem asfalto. A segunda, ja com penalidade, mostrou o
+// contrario -- fugindo do barro por desvios longos demais --, e foi ela que
+// revelou que o modelo certo e teto, e nao multiplicador.
+//
+// Sao estimativas, e nao medicoes: dizem a ordem de grandeza, nao a velocidade
+// da frota de ninguem. Como as velocidades base, a fonte honesta e o
+// hodometro -- o dist.Calibrate da Fase 2.
+//
+// Duas coisas que isto nao resolve, e vale saber:
+//
+// A maioria das vias no interior simplesmente nao tem a etiqueta. Na rota que
+// motivou este mapa, 26 de 49 vias vinham sem surface, e para essas nada muda.
+//
+// E paralelepipedo e barro nao sao a mesma coisa por motivos diferentes: um e
+// firme e desconfortavel, o outro e liso e traicoeiro na chuva. O teto so
+// captura "nao passa disso", nao "por que".
+//
+// Superficie boa -- asfalto, concreto -- nao aparece aqui: nao ha teto a impor,
+// e a velocidade da classe da via vale inteira.
+func superficiesCarro() map[string]float64 {
+	return map[string]float64{
+		// Pavimento ruim: firme, mas ninguem corre.
+		"concrete:plates": 60,
+		"paving_stones":   40,
+		"sett":            30,
+		"cobblestone":     30,
+
+		// Sem pavimento, do melhor para o pior.
+		"compacted":   50,
+		"fine_gravel": 40,
+		"gravel":      30,
+		"pebblestone": 30,
+		"unpaved":     30,
+		"dirt":        25,
+		"earth":       25,
+		"ground":      25,
+		"grass":       20,
+		"sand":        15,
+		"mud":         10,
 	}
 }
 
@@ -109,6 +184,13 @@ func (p Profile) avaliar(w osm.Way) (via, bool) {
 			}
 		}
 	}
+	// A superficie entra depois do maxspeed, e de proposito: o limite legal e
+	// o que a placa permite, a superficie e o que o chao entrega. Numa estrada
+	// vicinal com maxspeed=60 e surface=dirt, quem manda e o barro.
+	if teto, ok := p.SurfaceMaxKmh[superficieDe(w)]; ok && teto < velocidade {
+		velocidade = teto
+	}
+
 	if velocidade <= 0 {
 		return via{}, false
 	}
@@ -133,6 +215,32 @@ func (p Profile) avaliar(w osm.Way) (via, bool) {
 	}
 
 	return via{speedKmh: velocidade, frente: frente, tras: tras}, true
+}
+
+// superficieDe devolve a superficie da via.
+//
+// Prefere surface, e cai para tracktype quando ela falta. Sao etiquetas
+// diferentes com a mesma pergunta por tras -- tracktype existe para estradas
+// vicinais e vai de grade1, que e quase pavimento, a grade5, que e trilha de
+// terra solta. Traduzir uma na outra aproveita a resposta de quem mapeou sem
+// obrigar quem usa a conhecer as duas.
+func superficieDe(w osm.Way) string {
+	if s, ok := w.Tags.Get("surface"); ok {
+		return s
+	}
+	switch t, _ := w.Tags.Get("tracktype"); t {
+	case "grade1":
+		return "compacted"
+	case "grade2":
+		return "gravel"
+	case "grade3":
+		return "unpaved"
+	case "grade4":
+		return "dirt"
+	case "grade5":
+		return "ground"
+	}
+	return ""
 }
 
 // lerMaxspeed interpreta a etiqueta maxspeed.

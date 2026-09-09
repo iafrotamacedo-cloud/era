@@ -47,7 +47,7 @@ mesma direção. Comparar identidades vira, então, medir um ângulo.
 
 ## Estado
 
-Fases 1 a 5 de 7 concluídas.
+Fases 1 a 6 de 7 concluídas.
 
 | Fase | Pacote | Entrega | Estado |
 |---|---|---|---|
@@ -56,7 +56,7 @@ Fases 1 a 5 de 7 concluídas.
 | 3 | `onnx`, `graph` | parser de `.onnx` e executor de grafo | **pronto** |
 | 4 | validação | modelo real conferido contra o ONNX Runtime | **pronto** |
 | 5 | `detect`, `align` | detecção e alinhamento | **pronto** |
-| 6 | `index` | busca 1:N, serialização | — |
+| 6 | `index` | busca 1:N, serialização | **pronto** |
 | 7 | — | API pública, docs, benchmarks | — |
 
 **A Fase 4 fechou o marco do projeto.** O vetor gerado aqui bate com o do ONNX
@@ -319,6 +319,84 @@ passam por letterbox — redimensionadas preservando a proporção, com o resto
 preenchido — e as coordenadas voltam convertidas. Esticar para o quadrado
 seria mais simples e degradaria a detecção: um rosto achatado deixa de
 parecer rosto.
+
+## Busca de identidade
+
+O pacote [`index`](index/) guarda os vetores e responde *"de quem é este
+rosto"*.
+
+Os vetores são normalizados **na inserção**, uma vez cada. Com comprimento 1,
+a similaridade de cosseno vira o produto escalar puro — sem divisão, sem raiz
+— e uma busca contra N vetores é exatamente um produto matriz-vetor.
+
+**Vários vetores por pessoa.** Uma foto só de cadastro rende resultado ruim em
+condição real: luz diferente, capacete, óculos, ângulo. O índice mapeia muitos
+vetores para uma identidade e a busca devolve **identidades distintas**, com a
+melhor pontuação de cada uma. Sem isso, pedir os 3 melhores devolveria a mesma
+pessoa três vezes.
+
+**`Remove` existe porque precisa existir.** Dado biométrico é dado pessoal
+sensível, e o direito de eliminação só vale se houver como exercê-lo de
+verdade — não marcando como inativo, apagando.
+
+### Desempenho
+
+Cadastro com 5 amostras por pessoa, vetores de 128 dimensões:
+
+| Cadastro | Vetores | Busca |
+|---|---|---|
+| 20 pessoas | 100 | 7,3 µs |
+| 200 pessoas | 1.000 | 55 µs |
+| 2.000 pessoas | 10.000 | 306 µs |
+| 20.000 pessoas | 100.000 | 2,3 ms |
+
+### Por que não há índice aproximado
+
+As fases anteriores previam HNSW. **O benchmark discordou.** Com 200 pessoas a
+busca exaustiva responde em 55 µs — 1.500× mais rápido que a inferência que
+produziu o vetor consultado. O custo é linear: um índice aproximado só
+começaria a compensar perto de um milhão de pessoas.
+
+Implementar HNSW aqui seria complexidade sem benefício mensurável.
+
+### O produto matriz-vetor é próprio, não do kernel
+
+A tentação era reusar `kernel.MatMul` — já bloqueado, paralelo e testado. Mas
+ele é feito para matriz × matriz, e seu laço interno percorre a dimensão de
+saída, que numa consulta vale 1. O miolo otimizado roda uma iteração e sobra
+só o custo de fatiar.
+
+Medido com 1.000 vetores × 128 dimensões, **tudo no mesmo binário**:
+
+| Caminho | Tempo |
+|---|---|
+| Ingênuo, serial | 119,4 µs |
+| Via `kernel.MatMul` | 100,9 µs |
+| Desenrolado, serial | 65,6 µs |
+| **Desenrolado + paralelo** (em uso) | **43,2 µs** |
+
+É a mesma armadilha que travava a convolução depthwise em 0,86 GFLOPS.
+Reaproveitar código bom numa forma para a qual ele não foi feito custa mais
+que escrever o pouco código certo.
+
+A ênfase em *mesmo binário* não é detalhe: numa medição anterior, comparando
+execuções diferentes, o mesmo laço apareceu 2,6× mais lento por variação de
+carga da máquina — e a conclusão errada quase levou a apagar uma otimização
+que funciona.
+
+### Serialização
+
+Formato próprio, todo little-endian explícito, com CRC32 no fim. A ordem de
+bytes é explícita porque um índice gravado num servidor x86 precisa ser lido
+num coletor ARM sem surpresa.
+
+O CRC não protege contra adulteração — protege contra o caso comum e chato:
+gravação interrompida, disco com defeito, arquivo truncado numa cópia. Sem
+ele, meio arquivo carregaria e produziria respostas erradas em silêncio.
+
+Todo tamanho lido do arquivo é conferido contra o que resta no buffer **antes
+de qualquer alocação**: um campo corrompido não pode fazer o programa tentar
+reservar gigabytes.
 
 ## Licença
 

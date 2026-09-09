@@ -47,7 +47,7 @@ mesma direção. Comparar identidades vira, então, medir um ângulo.
 
 ## Estado
 
-Fases 1 a 4 de 7 concluídas.
+Fases 1 a 5 de 7 concluídas.
 
 | Fase | Pacote | Entrega | Estado |
 |---|---|---|---|
@@ -55,7 +55,7 @@ Fases 1 a 4 de 7 concluídas.
 | 2 | `nn` | camadas, workspace reutilizável, fusão de BatchNorm | **pronto** |
 | 3 | `onnx`, `graph` | parser de `.onnx` e executor de grafo | **pronto** |
 | 4 | validação | modelo real conferido contra o ONNX Runtime | **pronto** |
-| 5 | `detect`, `align` | detecção e alinhamento | — |
+| 5 | `detect`, `align` | detecção e alinhamento | **pronto** |
 | 6 | `index` | busca 1:N, serialização | — |
 | 7 | — | API pública, docs, benchmarks | — |
 
@@ -259,6 +259,66 @@ O workspace chega a **68 MB** para esse modelo de 37 MB. O alocador é uma
 pilha que só reaproveita memória *entre* passagens, não dentro de uma: cada um
 dos 88 tensores intermediários recebe memória nova. Análise de tempo de vida
 cortaria bastante. Fica registrado como conhecido, não corrigido.
+
+## Detecção e alinhamento
+
+**`align`** endireita o rosto antes do reconhecimento. A rede foi treinada com
+rostos numa posição canônica — olhos numa altura fixa, boca noutra, tamanho
+padronizado — e alimentá-la com um rosto torto degrada a acurácia muito mais
+do que a intuição sugere.
+
+A transformação é de **similaridade**: rotação, escala uniforme e translação.
+Sem cisalhamento, de propósito — uma afim completa encaixaria os 5 pontos
+exatamente, mas distorcendo o rosto, e a distorção muda a identidade que a
+rede enxerga.
+
+O ajuste usa números complexos em vez de decomposição em valores singulares.
+Tratando `(x,y)` como `x + yi`, a similaridade vira uma multiplicação e o
+mínimo quadrados tem solução fechada. Além de ser menos código que o
+algoritmo de Umeyama, a forma complexa **não consegue produzir reflexão** —
+multiplicação complexa é sempre rotação pura. Um rosto espelhado seria uma
+solução válida para o mínimo quadrados e uma catástrofe para o
+reconhecimento.
+
+**`detect`** envolve o YuNet (MIT, 232 KB). O modelo não devolve uma lista de
+rostos: devolve doze tensores — classificação, objectness, caixa e pontos —
+em três escalas com passos de 8, 16 e 32 pixels. São 8.400 âncoras, e cada
+uma responde *"se houvesse um rosto centrado perto de mim, ele estaria
+assim"*.
+
+```
+score = √(cls × obj)
+cx = (coluna + bbox₀) · passo      largura = exp(bbox₂) · passo
+cy = (linha  + bbox₁) · passo      altura  = exp(bbox₃) · passo
+```
+
+O logaritmo no tamanho não é enfeite: ele faz a rede prever a **razão** entre
+o tamanho do rosto e o da âncora, em vez da diferença absoluta — e razão é o
+que se mantém estável entre um rosto perto e um longe.
+
+### De onde vem a fórmula
+
+A decodificação não está documentada de forma verificável em lugar nenhum.
+As fórmulas foram **derivadas dos dados**: comparando as saídas cruas do
+modelo com o que o `cv2.FaceDetectorYN` devolve na mesma imagem, e conferindo
+em cinco limiares diferentes.
+
+| Limiar | Detecções | Diferença máxima |
+|---|---|---|
+| 0,001 | 638 | 5,19 × 10⁻⁴ px |
+| 0,005 | 273 | 5,19 × 10⁻⁴ px |
+| 0,010 | 236 | 5,19 × 10⁻⁴ px |
+| 0,050 | 92 | 4,58 × 10⁻⁴ px |
+
+Contagem idêntica em todos, geometria batendo em meio milésimo de pixel.
+`detect_test.go` guarda essa verificação; sem ela, uma refatoração poderia
+perder a fórmula sem que nada quebrasse de forma visível.
+
+O YuNet de 2023 tem entrada **fixa** em 640×640. Imagens de outro tamanho
+passam por letterbox — redimensionadas preservando a proporção, com o resto
+preenchido — e as coordenadas voltam convertidas. Esticar para o quadrado
+seria mais simples e degradaria a detecção: um rosto achatado deixa de
+parecer rosto.
 
 ## Licença
 

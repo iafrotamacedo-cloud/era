@@ -28,7 +28,30 @@ type Options struct {
 	// BGR inverte a ordem dos canais. Modelos vindos do mundo OpenCV
 	// costumam esperar BGR; os do mundo PyTorch, RGB.
 	BGR bool
+
+	// Borda decide o que acontece com coordenadas fora da imagem.
+	Borda Borda
+
+	// Fill e a cor usada quando Borda e BordaConstante, em 0 a 255 e na
+	// ordem RGB -- antes da inversao para BGR, se houver.
+	Fill [3]float32
 }
+
+// Borda diz como tratar coordenadas fora da imagem.
+type Borda int
+
+// As duas politicas de borda.
+const (
+	// BordaReplica repete o pixel da margem. E o certo para recorte de
+	// rosto: com o rosto encostado no limite da foto, uma faixa preta seria
+	// ruido que a rede nunca viu no treino.
+	BordaReplica Borda = iota
+
+	// BordaConstante preenche com Fill. E o certo para letterbox, onde a
+	// area preenchida nao faz parte da imagem e esticar a margem inventaria
+	// conteudo que nao existe.
+	BordaConstante
+)
 
 // OpcoesPadrao devolve pixels crus de 0 a 255, em RGB.
 func OpcoesPadrao() Options {
@@ -63,14 +86,29 @@ func (o Options) normalizada() Options {
 // para a rede.
 func Crop(img image.Image, pontos Landmarks, opt Options) (*tensor.Tensor, error) {
 	opt = opt.normalizada()
-	if opt.Size <= 0 {
-		return nil, fmt.Errorf("align: tamanho invalido (%d)", opt.Size)
-	}
 
 	t, err := Para(pontos, opt.Size)
 	if err != nil {
 		return nil, err
 	}
+	return Warp(img, t, opt.Size, opt.Size, opt)
+}
+
+// Warp aplica uma transformacao qualquer, produzindo o tensor [1,3,alt,larg].
+//
+// t leva coordenadas da IMAGEM para coordenadas da SAIDA -- o mesmo sentido
+// que Similarity devolve. A inversao necessaria para percorrer a saida
+// buscando na entrada acontece aqui dentro.
+//
+// Serve tanto para o recorte de rosto quanto para o letterbox que a
+// deteccao precisa: os dois sao a mesma operacao com transformacoes e
+// politicas de borda diferentes.
+func Warp(img image.Image, t Transform, larg, alt int, opt Options) (*tensor.Tensor, error) {
+	opt = opt.normalizada()
+	if larg <= 0 || alt <= 0 {
+		return nil, fmt.Errorf("align: tamanho de saida invalido (%dx%d)", larg, alt)
+	}
+
 	inv, err := t.Inverse()
 	if err != nil {
 		return nil, err
@@ -80,10 +118,11 @@ func Crop(img image.Image, pontos Landmarks, opt Options) (*tensor.Tensor, error
 	if err != nil {
 		return nil, err
 	}
+	am.borda = opt.Borda
+	am.fill = [3]float64{float64(opt.Fill[0]), float64(opt.Fill[1]), float64(opt.Fill[2])}
 
-	s := opt.Size
-	out := tensor.New(1, 3, s, s)
-	plano := s * s
+	out := tensor.New(1, 3, alt, larg)
+	plano := alt * larg
 
 	// Ordem dos canais na saida.
 	iR, iG, iB := 0, 1, 2
@@ -91,15 +130,15 @@ func Crop(img image.Image, pontos Landmarks, opt Options) (*tensor.Tensor, error
 		iR, iB = 2, 0
 	}
 
-	for y := 0; y < s; y++ {
-		for x := 0; x < s; x++ {
+	for y := 0; y < alt; y++ {
+		for x := 0; x < larg; x++ {
 			// O centro do pixel de saida, levado de volta a imagem original.
 			// O meio-pixel importa: sem ele o recorte sai deslocado meio
 			// pixel, e o erro aparece na terceira casa do vetor.
 			p := inv.Apply(Point{X: float64(x) + 0.5, Y: float64(y) + 0.5})
 
 			r, g, b := am.bilinear(p.X-0.5, p.Y-0.5)
-			pos := y*s + x
+			pos := y*larg + x
 
 			out.Data[iR*plano+pos] = (float32(r) - opt.Mean[0]) * opt.Scale[0]
 			out.Data[iG*plano+pos] = (float32(g) - opt.Mean[1]) * opt.Scale[1]
@@ -173,6 +212,9 @@ type amostrador struct {
 	nrgba    *image.NRGBA
 	cinza    *image.Gray
 	ycbcr    *image.YCbCr
+
+	borda Borda
+	fill  [3]float64
 }
 
 func novoAmostrador(img image.Image) (*amostrador, error) {
@@ -206,6 +248,12 @@ func novoAmostrador(img image.Image) (*amostrador, error) {
 // recorte quando o rosto encosta no limite da foto, que e comum em foto de
 // documento e em quadro de camera.
 func (a *amostrador) pixel(x, y int) (float64, float64, float64) {
+	if a.borda == BordaConstante &&
+		(x < a.limites.Min.X || x >= a.limites.Max.X ||
+			y < a.limites.Min.Y || y >= a.limites.Max.Y) {
+		return a.fill[0], a.fill[1], a.fill[2]
+	}
+
 	if x < a.limites.Min.X {
 		x = a.limites.Min.X
 	}

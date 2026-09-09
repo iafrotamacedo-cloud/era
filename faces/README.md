@@ -4,8 +4,11 @@ Motor de reconhecimento facial em Go puro. Zero dependências.
 
 ## O que é
 
-Uma biblioteca que recebe uma imagem e devolve um vetor de 512 números
+Uma biblioteca que recebe uma imagem e devolve um vetor de números
 representando o rosto. Vetores parecidos = mesma pessoa.
+
+O tamanho do vetor é do modelo, não da biblioteca: o SFace produz 128
+dimensões, o ArcFace produz 512.
 
 Não é um sistema. Não tem banco, tela, login nem nuvem. É o motor que outros
 sistemas importam.
@@ -29,7 +32,7 @@ Reconhecimento facial não é modelo de linguagem — é geometria vetorial:
 
 1. **Detecção** — achar os rostos e os 5 pontos faciais de cada um
 2. **Alinhamento** — recortar e endireitar num quadrado padrão de 112×112
-3. **Embedding** — a rede transforma o recorte num vetor de 512 números
+3. **Embedding** — a rede transforma o recorte num vetor de números
 4. **Comparação** — similaridade de cosseno entre vetores
 
 A rede é treinada para que fotos da mesma pessoa virem vetores apontando na
@@ -44,20 +47,20 @@ mesma direção. Comparar identidades vira, então, medir um ângulo.
 
 ## Estado
 
-Fases 1 a 3 de 7 concluídas.
+Fases 1 a 4 de 7 concluídas.
 
 | Fase | Pacote | Entrega | Estado |
 |---|---|---|---|
 | 1 | `tensor`, `kernel` | tensor N-d, matmul bloqueado, im2col, Conv2D, depthwise | **pronto** |
 | 2 | `nn` | camadas, workspace reutilizável, fusão de BatchNorm | **pronto** |
 | 3 | `onnx`, `graph` | parser de `.onnx` e executor de grafo | **pronto** |
-| 4 | `embed` | ArcFace fim a fim | — |
+| 4 | validação | modelo real conferido contra o ONNX Runtime | **pronto** |
 | 5 | `detect`, `align` | detecção e alinhamento | — |
 | 6 | `index` | busca 1:N, serialização | — |
 | 7 | — | API pública, docs, benchmarks | — |
 
-A Fase 4 é o marco real: quando o vetor gerado aqui bater com o do ONNX
-Runtime na quarta casa decimal, a tecnologia está reproduzida.
+**A Fase 4 fechou o marco do projeto.** O vetor gerado aqui bate com o do ONNX
+Runtime — a meta era a quarta casa decimal, o resultado foi a quinta.
 
 ## Desempenho
 
@@ -217,6 +220,45 @@ que carregar um modelo novo não vire uma sequência de tentativas.
 
 A regra é a mesma dos pesos em arquivo externo: uma rede que carrega, roda e
 dá resposta errada é o pior desfecho possível numa biblioteca.
+
+## Validação contra o ONNX Runtime
+
+O modelo **SFace** (MobileFaceNet, Apache 2.0) carrega e executa: 88 operações,
+9,6 milhões de parâmetros, entrada `[1,3,112,112]`, saída `[1,128]`. Nenhum
+operador faltou.
+
+O vetor gerado aqui, comparado com o do ONNX Runtime na mesma entrada:
+
+| | |
+|---|---|
+| **Similaridade de cosseno** | **1,000000000** |
+| Diferença absoluta máxima | 1,9 × 10⁻⁵ |
+| Norma L2 | 2,221406 (referência: 2,221428) |
+| Tempo por rosto | 83,6 ms |
+
+A meta era bater na quarta casa decimal. Bateu na quinta. A divergência que
+resta é acúmulo de arredondamento de `float32` em ordem diferente de soma —
+não há como eliminá-la, e ela não muda a identidade que o vetor representa.
+
+O teste vive em `graph/modelo_real_test.go` e **pula quando o modelo não está
+presente**, porque o repositório não guarda pesos. Para rodar:
+
+```
+# baixe o SFace do OpenCV Zoo para models/sface.onnx
+go test ./faces/graph/ -run SFace -v
+```
+
+A entrada e o vetor de referência estão em `graph/testdata/`, gerados por
+`testdata/gerar_referencia.py`. A entrada é lida de arquivo pelos dois lados —
+reproduzir o mesmo pseudo-aleatório em Python e em Go seria uma fonte de
+divergência sem relação com o que está sob teste.
+
+### Consumo de memória
+
+O workspace chega a **68 MB** para esse modelo de 37 MB. O alocador é uma
+pilha que só reaproveita memória *entre* passagens, não dentro de uma: cada um
+dos 88 tensores intermediários recebe memória nova. Análise de tempo de vida
+cortaria bastante. Fica registrado como conhecido, não corrigido.
 
 ## Licença
 

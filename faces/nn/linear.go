@@ -9,8 +9,10 @@ import (
 
 // Linear e a camada totalmente conectada: y = W*x + b.
 //
-// Na ERA ela e a ultima etapa -- a que produz o vetor de 512 numeros que
-// representa o rosto.
+// Na ERA ela e a ultima etapa -- a que produz o vetor que representa o rosto.
+//
+// O tamanho do vetor e do modelo, nao da biblioteca: o SFace produz 128
+// dimensoes, o ArcFace produz 512. A camada le o que os pesos disserem.
 //
 // Layout dos pesos, igual ao do ONNX (Gemm com transB=1):
 //

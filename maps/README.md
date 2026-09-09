@@ -207,14 +207,45 @@ permutação, índices crescem, todo arco sobe. Um arquivo corrompido do tamanho
 certo passaria pela checagem de tamanho e quebraria no meio de uma consulta,
 que é muito pior de diagnosticar do que uma recusa na abertura.
 
-## O que a Fase 5 ainda não entrega
+## A comparação com o OSRM
 
-**A comparação com o OSRM.** O texto do roteiro diz que a fase termina quando
-a rota bater com a do OSRM em ±1%. Isso não foi verificado. Exige um extrato
-real e uma instância do OSRM para comparar, e o repositório não guarda dados
-de mapa. O que está verificado é a consistência interna — o CH concorda com um
-Dijkstra que concorda com a implementação óbvia. É uma cadeia sólida, mas não
-é a mesma afirmação.
+Os testes verificam que as três implementações de rota concordam entre si: a
+hierarquia bate com o Dijkstra bidirecional, que bate com o Dijkstra óbvio. É
+uma cadeia sólida, e ela **não prova o que mais importa**.
+
+Se uma etiqueta do OpenStreetMap tiver sido lida errado — mão única implícita,
+restrição de acesso, o que conta como estrada — as três erram juntas e em
+silêncio, porque todas leem o mapa pelo mesmo perfil. Só uma referência de
+fora pega isso.
+
+O programa está escrito e testado:
+
+```bash
+go run ./maps/cmd/osrmcompare -mapa ceara-latest.osm.pbf -n 500
+```
+
+Ele sorteia pares de **cruzamentos do próprio grafo**, e não coordenadas
+soltas: cada motor encaixa a coordenada à sua maneira — o nosso no cruzamento
+mais próximo, o OSRM em qualquer ponto de um trecho —, e sortear às cegas
+mediria a diferença entre os dois encaixes, não entre as duas rotas. O quanto
+o OSRM se afastou vem na resposta dele, e o par é descartado quando isso
+passar do limite.
+
+O relatório traz mediana, p90, p99 e pior caso, separando **erro absoluto** de
+**viés**: metade errando 10% para mais e metade 10% para menos dá mediana de
+10% e viés zero, e as duas coisas dizem problemas diferentes. E lista os cinco
+piores com as coordenadas na mão, para abrir no mapa — é isso que aponta o que
+consertar; uma mediana não aponta nada.
+
+**Ainda não foi rodado contra um OSRM de verdade**, porque isso exige baixar
+um extrato e subir um container. As instruções estão no cabeçalho do programa.
+Uma expectativa honesta: não vai bater em ±1% de primeira. O OSRM aplica
+penalidade de conversão e restrições de giro que a ERA lê das relações mas
+ainda não usa. O valor da primeira rodada é mostrar **onde** erra.
+
+O programa é o único lugar da ERA que fala HTTP, e ele não é parte do motor —
+verificável com `go list -deps ./maps/geo ./maps/dist ./maps/osm ./maps/graph
+./maps/ch | grep net/`, que não devolve nada.
 
 ## O que a Fase 4 entrega
 

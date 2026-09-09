@@ -116,18 +116,47 @@ func (g *Grid) Within(center Point, radiusM float64) []Match {
 		return nil
 	}
 
+	var out []Match
+	g.varrerCaixa(center, radiusM, func(m Match) {
+		out = append(out, m)
+	})
+
+	// slices.SortFunc em vez de sort.Slice: a segunda troca elementos por
+	// reflexao, e ordenar candidatos e o passo mais caro de uma consulta com
+	// muitos resultados.
+	slices.SortFunc(out, func(a, b Match) int {
+		switch {
+		case a.Meters < b.Meters:
+			return -1
+		case a.Meters > b.Meters:
+			return 1
+		default:
+			return 0
+		}
+	})
+	return out
+}
+
+// varrerCaixa chama visitar para cada ponto a no maximo radiusM de center.
+//
+// Separado de Within porque nem todo mundo quer a lista inteira. Quem procura
+// os k mais proximos precisa olhar os mesmos candidatos, mas nao precisa
+// junta-los num vetor nem ordena-los -- e numa grade densa os candidatos
+// descartados sao a esmagadora maioria.
+//
+// A ordem de visita nao e definida.
+func (g *Grid) varrerCaixa(center Point, radiusM float64, visitar func(Match)) {
 	b := BoxAround(center, radiusM)
 	y0 := g.row(b.MinLat)
 	y1 := g.row(b.MaxLat)
 
-	var out []Match
 	varrer := func(x int32) {
 		for y := y0; y <= y1; y++ {
 			for _, i := range g.cells[cellKey{x, y}] {
 				p := g.pts[i]
 				d := Haversine(center, p)
 				if d <= radiusM {
-					out = append(out, Match{ID: g.ids[i], Point: p, Meters: d})
+					visitar(Match{ID: g.ids[i], Point: p, Meters: d})
 				}
 			}
 		}
@@ -161,53 +190,115 @@ func (g *Grid) Within(center Point, radiusM float64) []Match {
 			varrer(x)
 		}
 	}
-
-	// slices.SortFunc em vez de sort.Slice: a segunda troca elementos por
-	// reflexao, e ordenar candidatos e o passo mais caro de uma consulta com
-	// muitos resultados.
-	slices.SortFunc(out, func(a, b Match) int {
-		switch {
-		case a.Meters < b.Meters:
-			return -1
-		case a.Meters > b.Meters:
-			return 1
-		default:
-			return 0
-		}
-	})
-	return out
 }
 
 // Nearest devolve os k pontos mais proximos de center, do mais proximo para
 // o mais distante. Devolve menos que k se a grade tiver menos pontos.
 //
-// Funciona buscando num raio pequeno e multiplicando-o ate encontrar k
-// pontos. Isso e exato, e nao apenas aproximado, por um motivo simples:
-// qualquer ponto fora do raio esta mais longe que todos os que estao dentro.
-// Entao, assim que uma busca devolve k ou mais, os k primeiros dela ja sao
-// os k mais proximos do planeta inteiro.
+// Funciona buscando num raio pequeno e dobrando-o ate encontrar k pontos.
+// Isso e exato, e nao apenas aproximado, por um motivo simples: qualquer
+// ponto fora do raio esta mais longe que todos os que estao dentro. Entao,
+// assim que uma busca devolve k ou mais, os k primeiros dela ja sao os k mais
+// proximos do planeta inteiro.
 //
-// O custo das tentativas descartadas e limitado: cada raio cobre quatro
-// vezes a area do anterior, entao a ultima busca domina a soma de todas.
+// E essa propriedade que permite chutar o raio inicial pela densidade da
+// grade sem arriscar a resposta: um chute ruim custa uma varredura a mais,
+// nunca um ponto errado.
 func (g *Grid) Nearest(center Point, k int) []Match {
 	if k <= 0 || len(g.pts) == 0 {
 		return nil
 	}
 
-	raio := g.cell * metrosPorGrauLat
+	// Guarda so os k melhores, em vez de juntar todos os candidatos do raio e
+	// ordenar no fim.
+	//
+	// A diferenca aparece porque a grade e densa: um raio de uma celula ja
+	// devolve dezenas ou centenas de candidatos, e quase todos serao
+	// descartados. Ordenar duzentos para entregar um e trabalho que nao
+	// precisava existir -- e a alocacao do vetor de candidatos era, sozinha,
+	// a maior parte do custo da consulta.
+	//
+	// Vetor ordenado, e nao heap: k costuma ser 1 ou 10, e nesse tamanho
+	// inserir num vetor pequeno ganha do heap por ser previsivel para o
+	// processador. O teste de descarte -- comparar com o pior guardado -- e
+	// O(1) e resolve a esmagadora maioria dos candidatos.
+	melhores := make([]Match, 0, k)
+
+	raio := g.raioInicial(k)
 	for {
-		m := g.Within(center, raio)
-		if len(m) >= k {
-			return m[:k]
+		melhores = melhores[:0]
+		g.varrerCaixa(center, raio, func(m Match) {
+			if len(melhores) == k {
+				if m.Meters >= melhores[k-1].Meters {
+					return
+				}
+				melhores = melhores[:k-1]
+			}
+			i := len(melhores)
+			for i > 0 && melhores[i-1].Meters > m.Meters {
+				i--
+			}
+			melhores = append(melhores, Match{})
+			copy(melhores[i+1:], melhores[i:])
+			melhores[i] = m
+		})
+
+		if len(melhores) >= k {
+			return melhores
 		}
 		if raio >= meiaVoltaAoMundo {
-			return m // a grade inteira foi varrida; nao existem k pontos
+			return melhores // a grade inteira foi varrida; nao existem k pontos
 		}
-		raio *= 4
+		// Dobra, e nao quadruplica. Com a estimativa inicial ja mirando alto,
+		// repetir e raro; quando acontece, um passo menor desperdica menos.
+		raio *= 2
 		if raio > meiaVoltaAoMundo {
 			raio = meiaVoltaAoMundo
 		}
 	}
+}
+
+// raioInicial estima o raio que ja deve conter k pontos.
+//
+// A versao antiga comecava por uma celula inteira. Numa grade densa isso e
+// caro sem necessidade: uma celula dimensionada para buscas de 10 km pode
+// guardar centenas de pontos, e varrer todos eles para devolver o mais
+// proximo e o grosso do custo da consulta -- nao a alocacao, como parecia.
+//
+// Aqui o raio sai da densidade medida da propria grade: se ha p pontos por
+// celula ocupada e a celula tem lado L, a area que em media contem k pontos
+// tem raio da ordem de L * sqrt(k/p) / 2.
+//
+// Errar nao quebra nada, so custa uma iteracao a mais ou uma varredura maior
+// que a necessaria: qualquer que seja o raio, achar k pontos dentro dele
+// significa que sao os k mais proximos do planeta. Por isso o palpite pode
+// ser agressivo.
+func (g *Grid) raioInicial(k int) float64 {
+	lado := g.cell * metrosPorGrauLat
+	if len(g.cells) == 0 {
+		return lado
+	}
+
+	porCelula := float64(len(g.pts)) / float64(len(g.cells))
+	if porCelula <= 0 {
+		return lado
+	}
+
+	// O alvo nao e conter k pontos, e sim uns quatro k. Mirar em k faria a
+	// estimativa errar para baixo em metade das consultas, e cada erro custa
+	// uma varredura descartada mais uma de area quatro vezes maior. Sai mais
+	// barato varrer um pouco a mais de primeira do que repetir.
+	raio := lado * math.Sqrt(float64(k)/porCelula)
+
+	// Piso: abaixo de um dezesseis avos da celula a varredura ja olha uma
+	// celula so, e encolher mais nao economiza -- so adianta iteracoes.
+	if minimo := lado / 16; raio < minimo {
+		raio = minimo
+	}
+	if raio > lado {
+		raio = lado
+	}
+	return raio
 }
 
 // key, col e row traduzem coordenadas para indices de celula.

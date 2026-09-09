@@ -170,3 +170,22 @@ func BenchmarkGridConstrucao(b *testing.B) {
 }
 
 var sinkInt int
+
+// O caso que o motor de rotas faz o tempo todo: encaixar uma coordenada no
+// ponto mais proximo. E k=1, e era o que mais sofria com a versao que juntava
+// e ordenava todos os candidatos do raio.
+func BenchmarkGridNearest1(b *testing.B) {
+	ids, pts, consultas := baseDeTeste(b)
+
+	g := NewGridForRadius(10_000)
+	for i := range pts {
+		g.Add(ids[i], pts[i])
+	}
+
+	b.ResetTimer()
+	var n int
+	for i := 0; i < b.N; i++ {
+		n += len(g.Nearest(consultas[i&1023], 1))
+	}
+	sinkInt = n
+}

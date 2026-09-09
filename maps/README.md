@@ -156,15 +156,21 @@ Para responder `dist.Leg`, que traz metros **e** segundos, a busca acumula a
 segunda grandeza junto com a primeira. A alternativa seria desempacotar o
 caminho só para somá-la, e desempacotar custa mais que a própria busca.
 
-### O gargalo mudou de lugar
+### O gargalo mudou de lugar, e foi consertado
 
 Com a hierarquia, `geo.Nearest` — encaixar a coordenada no cruzamento mais
-próximo — passou a pesar **22 µs por ponta, uns 20% de uma consulta**. No
-motor da Fase 4 era ruído; agora não é.
+próximo — passou a pesar 22 µs por ponta, uns 20% de uma consulta. No motor da
+Fase 4 era ruído; com o CH, não era mais.
 
-Não foi mexido nesta fase: é código da Fase 1, e otimizá-lo de carona num
-commit sobre roteamento seria esconder a mudança. Fica registrado como o
-próximo lugar onde há ganho fácil.
+Foi reescrito (veja **O índice paga**, na Fase 1) e caiu para 3,6 µs. O efeito
+no motor:
+
+| | Antes | Depois |
+|---|---|---|
+| `ch.Router.Distance` | 220 µs | 198 µs |
+| `ch.Router.Matrix` 60×60 | 10,7 ms | **7,4 ms** |
+
+A matriz ganha mais porque encaixa cada ponto uma vez e depois só busca.
 
 ### O `.eramap` guarda a hierarquia pronta
 
@@ -472,6 +478,28 @@ num Intel i7-9750H:
 Montar o índice custa 14,6 ms para os 100.000 pontos. Numa operação isso é
 pago uma vez, no carregamento do cadastro, e amortizado por milhares de
 consultas.
+
+**`Nearest` foi reescrito na Fase 5**, quando a hierarquia acelerou a busca de
+rota o bastante para o encaixe da coordenada virar 20% do custo de uma
+consulta. Ele chamava `Within`, que junta todos os candidatos do raio e ordena
+todos — para devolver um.
+
+| | Antes | Depois | |
+|---|---|---|---|
+| `Nearest(·, 1)` | 34,2 µs | **5,9 µs** | 5,8× |
+| `Nearest(·, 10)` | 34,2 µs | **14,5 µs** | 2,4× |
+| Alocação | 8,6 KB | 32 B | |
+
+Duas mudanças. A varredura das células foi separada da coleta, e `Nearest`
+passou a guardar só os k melhores — a alocação caiu 270×, mas o tempo, só
+16%. Foi a medição que mostrou onde estava o custo de verdade: **varrer**. O
+raio inicial era uma célula inteira, e uma célula dimensionada para buscas de
+10 km guarda centenas de pontos.
+
+Agora o raio inicial sai da densidade medida da própria grade. Isso é seguro
+por causa da propriedade que já sustentava o algoritmo: achar k pontos dentro
+de um raio qualquer significa que são os k mais próximos do planeta. Um chute
+ruim custa uma varredura a mais, nunca um ponto errado.
 
 Rode você mesmo:
 

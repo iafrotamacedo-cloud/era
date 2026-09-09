@@ -17,7 +17,10 @@ type Matrix struct {
 	Origens  []graph.NodeID
 	Destinos []graph.NodeID
 
+	metrica graph.Metric
+
 	custos []float64
+	outras []float64 // a grandeza que a hierarquia nao minimiza
 }
 
 // Rows e Cols devolvem as dimensoes da matriz.
@@ -29,6 +32,18 @@ func (m *Matrix) At(i, j int) float64 { return m.custos[i*len(m.Destinos)+j] }
 
 // Alcancavel informa se ha caminho entre o par.
 func (m *Matrix) Alcancavel(i, j int) bool { return !math.IsInf(m.At(i, j), 1) }
+
+// Leg devolve distancia e tempo do par, nesta ordem.
+//
+// As duas vem juntas mesmo que a hierarquia minimize so uma: quem pede a
+// matriz mais rapida quase sempre tambem quer saber a quilometragem.
+func (m *Matrix) Leg(i, j int) (metros, segundos float64) {
+	k := i*len(m.Destinos) + j
+	if m.metrica == graph.Time {
+		return m.outras[k], m.custos[k]
+	}
+	return m.custos[k], m.outras[k]
+}
 
 // Matrix calcula o custo de todos os pares de uma vez.
 //
@@ -49,10 +64,13 @@ func (c *CH) Matrix(origens, destinos []graph.NodeID) *Matrix {
 	m := &Matrix{
 		Origens:  origens,
 		Destinos: destinos,
+		metrica:  c.m,
 		custos:   make([]float64, len(origens)*len(destinos)),
+		outras:   make([]float64, len(origens)*len(destinos)),
 	}
 	for i := range m.custos {
 		m.custos[i] = math.Inf(1)
+		m.outras[i] = math.Inf(1)
 	}
 	if len(origens) == 0 || len(destinos) == 0 {
 		return m
@@ -67,6 +85,7 @@ func (c *CH) Matrix(origens, destinos []graph.NodeID) *Matrix {
 	type bilhete struct {
 		destino int
 		custo   float64
+		outra   float64
 	}
 	baldes := make([][]bilhete, c.Len())
 
@@ -75,8 +94,8 @@ func (c *CH) Matrix(origens, destinos []graph.NodeID) *Matrix {
 		if !valido(c, t) {
 			continue
 		}
-		q.varrer(t, false, func(n graph.NodeID, custo float64) {
-			baldes[n] = append(baldes[n], bilhete{destino: j, custo: custo})
+		q.varrer(t, false, func(n graph.NodeID, custo, outra float64) {
+			baldes[n] = append(baldes[n], bilhete{destino: j, custo: custo, outra: outra})
 		})
 	}
 
@@ -99,10 +118,12 @@ func (c *CH) Matrix(origens, destinos []graph.NodeID) *Matrix {
 					continue
 				}
 				linha := m.custos[i*len(destinos) : (i+1)*len(destinos)]
-				q.varrer(s, true, func(n graph.NodeID, custo float64) {
+				linhaOutra := m.outras[i*len(destinos) : (i+1)*len(destinos)]
+				q.varrer(s, true, func(n graph.NodeID, custo, outra float64) {
 					for _, b := range baldes[n] {
 						if total := custo + b.custo; total < linha[b.destino] {
 							linha[b.destino] = total
+							linhaOutra[b.destino] = outra + b.outra
 						}
 					}
 				})
@@ -125,17 +146,17 @@ func (c *CH) Matrix(origens, destinos []graph.NodeID) *Matrix {
 // duas buscas alcancam pode ser o cume de algum par. Podar aqui perderia
 // pares. As buscas para cima sao pequenas -- algumas centenas de nos num
 // grafo de centenas de milhares --, entao roda-las inteiras sai barato.
-func (q *Query) varrer(de graph.NodeID, frente bool, visitar func(graph.NodeID, float64)) {
+func (q *Query) varrer(de graph.NodeID, frente bool, visitar func(graph.NodeID, float64, float64)) {
 	c := q.c
 
 	q.geracao++
-	h, dist, visto := &q.hb, q.db, q.vb
+	h, dist, visto, outra := &q.hb, q.db, q.vb, q.ob
 	if frente {
-		h, dist, visto = &q.hf, q.df, q.vf
+		h, dist, visto, outra = &q.hf, q.df, q.vf, q.of
 	}
 	h.limpar()
 
-	dist[de], visto[de] = 0, q.geracao
+	dist[de], visto[de], outra[de] = 0, q.geracao, 0
 	h.push(de, 0)
 
 	for h.Len() > 0 {
@@ -143,7 +164,7 @@ func (q *Query) varrer(de graph.NodeID, frente bool, visitar func(graph.NodeID, 
 		if visto[no] != q.geracao || custo > dist[no] {
 			continue
 		}
-		visitar(no, custo)
+		visitar(no, custo, outra[no])
 
 		arcos, podeFrente, podeTras := c.subindo(no)
 		for i, a := range arcos {
@@ -156,6 +177,7 @@ func (q *Query) varrer(de graph.NodeID, frente bool, visitar func(graph.NodeID, 
 			novo := custo + a.custo(c.m)
 			if visto[a.Para] != q.geracao || novo < dist[a.Para] {
 				dist[a.Para] = novo
+				outra[a.Para] = outra[no] + a.outroCusto(c.m)
 				visto[a.Para] = q.geracao
 				h.push(a.Para, novo)
 			}

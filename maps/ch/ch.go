@@ -72,6 +72,18 @@ func (a arco) custo(m graph.Metric) float64 {
 	return float64(a.Metros)
 }
 
+// outroCusto devolve a grandeza que a hierarquia nao minimiza.
+//
+// Ela e acumulada junto durante a busca. A alternativa seria desempacotar o
+// caminho para soma-la depois, e desempacotar custa mais que a propria busca
+// -- caro demais para quem so quer preencher uma matriz.
+func (a arco) outroCusto(m graph.Metric) float64 {
+	if m == graph.Time {
+		return float64(a.Metros)
+	}
+	return float64(a.Segundos)
+}
+
 // CH e um grafo com hierarquia pronta para consulta.
 //
 // Guarda, para cada no, apenas os arcos que sobem -- os que levam a nos mais

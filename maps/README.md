@@ -129,6 +129,43 @@ têm ida diferente da volta.
 Os caminhos desempacotados também são verificados rua por rua: um custo certo
 com um caminho impossível seria pior que um erro, porque parece bom.
 
+### O `ch.Router` fecha a troca de motor
+
+A interface `dist.Distancer`, escrita na Fase 2, aceita agora a terceira
+implementação — e trocar entre elas continua sendo uma linha:
+
+```go
+dist.NewEstimator(cal)          // Fase 2: haversine calibrado, erra ~10%
+graph.NewRouter(g, graph.Time)  // Fase 4: rota de verdade, milissegundos
+ch.NewRouter(c)                 // Fase 5: a mesma rota, microssegundos
+```
+
+Contra o motor da Fase 4, na mesma grade:
+
+| | `Distance` | `Matrix` 60×60 |
+|---|---|---|
+| `graph.Router` | 432 µs | 377 ms |
+| `ch.Router` | **220 µs** | **10,7 ms** |
+
+Duas vezes na consulta avulsa e **35× na matriz**. A diferença entre os dois
+números é o ponto: `Matrix` não é um laço de `Distance`. Usa o algoritmo de
+baldes, em que cada metade da busca é feita uma vez só — e é a matriz que uma
+roteirização pede.
+
+Para responder `dist.Leg`, que traz metros **e** segundos, a busca acumula a
+segunda grandeza junto com a primeira. A alternativa seria desempacotar o
+caminho só para somá-la, e desempacotar custa mais que a própria busca.
+
+### O gargalo mudou de lugar
+
+Com a hierarquia, `geo.Nearest` — encaixar a coordenada no cruzamento mais
+próximo — passou a pesar **22 µs por ponta, uns 20% de uma consulta**. No
+motor da Fase 4 era ruído; agora não é.
+
+Não foi mexido nesta fase: é código da Fase 1, e otimizá-lo de carona num
+commit sobre roteamento seria esconder a mudança. Fica registrado como o
+próximo lugar onde há ganho fácil.
+
 ### O `.eramap` guarda a hierarquia pronta
 
 O preparo é caro e cresce mais que linearmente. Sem gravar o resultado, todo

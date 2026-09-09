@@ -30,6 +30,12 @@ type Query struct {
 	c *CH
 
 	df, db []float64
+
+	// A outra metrica, acumulada ao longo do mesmo caminho. Custa dois
+	// vetores a mais do tamanho do grafo, e poupa desempacotar o caminho so
+	// para descobrir quantos quilometros tem a rota mais rapida.
+	of, ob []float64
+
 	af, ab []uint32 // arco pelo qual cada no foi alcancado
 	pf, pb []graph.NodeID
 	vf, vb []uint32
@@ -46,6 +52,7 @@ func (c *CH) NewQuery() *Query {
 	return &Query{
 		c:  c,
 		df: make([]float64, n), db: make([]float64, n),
+		of: make([]float64, n), ob: make([]float64, n),
 		af: make([]uint32, n), ab: make([]uint32, n),
 		pf: make([]graph.NodeID, n), pb: make([]graph.NodeID, n),
 		vf: make([]uint32, n), vb: make([]uint32, n),
@@ -80,6 +87,26 @@ func (q *Query) Cost(de, para graph.NodeID) (float64, bool) {
 		return 0, false
 	}
 	return melhor, true
+}
+
+// Leg devolve as duas grandezas do melhor caminho, sem montar o caminho.
+//
+// E o que um dist.Distancer precisa: distancia e tempo, sem pagar o
+// desempacotamento que so serve para desenhar a rota.
+func (q *Query) Leg(de, para graph.NodeID) (metros, segundos float64, ok bool) {
+	custo, encontro := q.buscar(de, para)
+	if encontro == graph.NoNode {
+		return 0, 0, false
+	}
+	if de == para {
+		return 0, 0, true
+	}
+
+	outra := q.of[encontro] + q.ob[encontro]
+	if q.c.m == graph.Time {
+		return outra, custo, true
+	}
+	return custo, outra, true
 }
 
 // Route acha o caminho e o desempacota de volta em ruas.
@@ -147,8 +174,8 @@ func (q *Query) buscar(de, para graph.NodeID) (float64, graph.NodeID) {
 	q.hf.limpar()
 	q.hb.limpar()
 
-	q.df[de], q.vf[de], q.pf[de] = 0, q.geracao, graph.NoNode
-	q.db[para], q.vb[para], q.pb[para] = 0, q.geracao, graph.NoNode
+	q.df[de], q.vf[de], q.pf[de], q.of[de] = 0, q.geracao, graph.NoNode, 0
+	q.db[para], q.vb[para], q.pb[para], q.ob[para] = 0, q.geracao, graph.NoNode, 0
 	q.hf.push(de, 0)
 	q.hb.push(para, 0)
 
@@ -173,11 +200,11 @@ func (q *Query) buscar(de, para graph.NodeID) (float64, graph.NodeID) {
 
 func (q *Query) expandirLado(frente bool, melhor *float64, encontro *graph.NodeID) {
 	c := q.c
-	h, dist, visto, arcoDe, anterior := &q.hb, q.db, q.vb, q.ab, q.pb
-	outraDist, outroVisto := q.df, q.vf
+	h, dist, visto, arcoDe, anterior, outra := &q.hb, q.db, q.vb, q.ab, q.pb, q.ob
+	outroLadoDist, outroVisto := q.df, q.vf
 	if frente {
-		h, dist, visto, arcoDe, anterior = &q.hf, q.df, q.vf, q.af, q.pf
-		outraDist, outroVisto = q.db, q.vb
+		h, dist, visto, arcoDe, anterior, outra = &q.hf, q.df, q.vf, q.af, q.pf, q.of
+		outroLadoDist, outroVisto = q.db, q.vb
 	}
 
 	no, custo := h.pop()
@@ -199,13 +226,17 @@ func (q *Query) expandirLado(frente bool, melhor *float64, encontro *graph.NodeI
 		novo := custo + a.custo(c.m)
 		if visto[a.Para] != q.geracao || novo < dist[a.Para] {
 			dist[a.Para] = novo
+			outra[a.Para] = outra[no] + a.outroCusto(c.m)
 			arcoDe[a.Para] = inicio + uint32(i)
 			anterior[a.Para] = no
 			visto[a.Para] = q.geracao
 			h.push(a.Para, novo)
 		}
-		if outroVisto[a.Para] == q.geracao {
-			if total := novo + outraDist[a.Para]; total < *melhor {
+		// Com o valor ja assentado deste lado, e nao com novo: se um caminho
+		// melhor ate este no ja era conhecido, e ele que combina com o outro
+		// lado. Usar novo daria um candidato pior que o real.
+		if outroVisto[a.Para] == q.geracao && visto[a.Para] == q.geracao {
+			if total := dist[a.Para] + outroLadoDist[a.Para]; total < *melhor {
 				*melhor = total
 				*encontro = a.Para
 			}
@@ -215,7 +246,7 @@ func (q *Query) expandirLado(frente bool, melhor *float64, encontro *graph.NodeI
 	// O proprio no pode ser o cume: quando as duas buscas o alcancam, o
 	// caminho que passa por ele e candidato mesmo sem nenhuma aresta nova.
 	if outroVisto[no] == q.geracao {
-		if total := custo + outraDist[no]; total < *melhor {
+		if total := custo + outroLadoDist[no]; total < *melhor {
 			*melhor = total
 			*encontro = no
 		}

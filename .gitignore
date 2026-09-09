@@ -19,6 +19,11 @@ models/
 *.eramap
 dados/
 
+# rascunho de sessao: varias sessoes trabalham nesta mesma arvore, e
+# arquivo solto na raiz acaba varrido para o commit de outra pessoa
+.tmp-*/
+.tmp-*
+
 # ambiente
 .env
 .DS_Store

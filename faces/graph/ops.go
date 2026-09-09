@@ -31,7 +31,8 @@ func init() {
 		"Gemm":               montaGemm,
 		"MatMul":             montaMatMul,
 
-		// Reducao espacial
+		// Espacial
+		"Resize":            montaResize,
 		"GlobalAveragePool": montaGlobalAvgPool,
 		"MaxPool":           montaMaxPool,
 		"AveragePool":       montaAveragePool,

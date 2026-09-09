@@ -56,20 +56,96 @@ economiza de 15% a 30%.
 
 ## Estado
 
-Fases 1, 2 e 3 de 7 concluídas.
+Fases 1 a 4 de 7 concluídas.
 
 | Fase | Pacote | Entrega | Estado |
 |---|---|---|---|
 | 1 | `geo` | ponto, haversine, Vincenty, retângulo, índice em grade | **pronto** |
 | 2 | `dist` | interface `Distancer`, cache em disco, fator de desvio | **pronto** |
 | 3 | `protowire`, `osm` | protobuf na mão + leitor de `.osm.pbf` | **pronto** |
-| 4 | `graph` | grafo CSR, contração de nós grau 2, Dijkstra bidirecional | — |
+| 4 | `graph` | grafo CSR, contração de nós grau 2, Dijkstra bidirecional | **pronto** |
 | 5 | `ch` | Contraction Hierarchies, matriz muitos-para-muitos | — |
 | 6 | `geocode` | endereço → ponto: CEP, CNEFE/IBGE, ruas do OSM | — |
 | 7 | `vrp` | Clarke-Wright, 2-opt/Or-opt, capacidade e janela de tempo | — |
 
 A Fase 5 é o marco real: quando a rota calculada aqui bater com a do OSRM em
 ±1%, a tecnologia está reproduzida.
+
+## O que a Fase 4 entrega
+
+O mapa vira grafo, e o grafo responde rota.
+
+```go
+g, err := graph.BuildFile("ceara.osm.pbf", graph.Car())
+de, _, _ := g.Nearest(deposito)
+para, _, _ := g.Nearest(cliente)
+p, ok := g.Route(de, para, graph.Time)   // p.Meters, p.Seconds, p.Nodes
+```
+
+E a Fase 2 finalmente troca de motor sem que o chamador saiba:
+
+```go
+d := dist.NewCache(graph.NewRouter(g, graph.Time))   // era dist.NewEstimator(cal)
+```
+
+### A contração é a maior decisão do pacote
+
+A maioria dos nós do OpenStreetMap existe só para desenhar a curva da rua.
+Contando quantas estradas citam cada nó **antes** de montar, o grafo nunca
+chega a existir em tamanho cheio. Numa rua de 11 nós sem cruzamento, sobram 2
+nós e 1 trecho — 82% contraídos, e o comprimento do trecho é a soma dos dez
+pedaços, não a linha reta entre as pontas.
+
+O `Stats` do grafo traz esse número para o extrato que você usar; num mapa
+urbano real a faixa costuma ser de 80% a 90%.
+
+### O bidirecional contra o óbvio
+
+Um Dijkstra comum explora um círculo em volta da origem. Buscando também a
+partir do destino, são dois círculos de metade do raio — e dois círculos de
+raio r/2 têm metade da área de um de raio r.
+
+Numa grade de 90 mil cruzamentos:
+
+| | Tempo | Alocações |
+|---|---|---|
+| Dijkstra óbvio (`RouteRef`) | 13,6 ms | 149.700 |
+| Bidirecional (`Route`) | **5,6 ms** | 5 |
+
+O `reference.go` não é código morto: é contra ele que o bidirecional é
+conferido, em 200 grafos sorteados, duas métricas, todos os pares. O critério
+de parada de uma busca bidirecional é a parte que engana — o encontro das duas
+frentes **não** garante o melhor caminho —, e é o tipo de erro que produz uma
+rota que parece boa e não é.
+
+### A conta do cache se inverteu
+
+A Fase 2 mediu que o `dist.Cache` **perdia** contra o `Estimator`: uma busca
+num mapa de 12 MB custa mais que a multiplicação que ela evita. Contra uma
+busca no grafo, a mesma busca no mapa é ruído:
+
+| | Sem cache | Com cache |
+|---|---|---|
+| Contra o `Estimator` | 130 ns | 100 ns |
+| Contra o `Router` | 1,13 ms | **63 ns** |
+
+O cache foi escrito na Fase 2 para este momento, e a documentação dele dizia
+isso antes de ser verdade. Agora é.
+
+### O que ainda não presta
+
+Uma matriz 500×500 são 250 mil buscas: minutos. É exatamente para isso que a
+Fase 5 existe. Até lá o `Router.Matrix` serve para conferir a resposta, não
+para rodar em produção.
+
+A memória da construção é proporcional aos nós de via, não ao tamanho do
+arquivo — um mapa de identificador para coordenada. Para um estado são
+centenas de MB; para o Brasil inteiro aperta, e a saída é o `.eramap` da Fase
+5, que guarda o grafo já montado.
+
+A geometria dos trechos é descartada: entre dois cruzamentos sobra o
+comprimento, não a lista de curvas. Achar caminho não precisa dela; desenhar
+o caminho num mapa precisa.
 
 ## O que a Fase 3 entrega
 

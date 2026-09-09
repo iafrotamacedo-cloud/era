@@ -103,6 +103,7 @@ func main() {
 	espera := flag.Duration("espera", 30*time.Second, "tempo limite de cada consulta")
 	pausa := flag.Duration("pausa", 0, "espera entre consultas de cada trabalhador; use contra servidor publico")
 	salvar := flag.String("salvar-eramap", "", "grava a hierarquia preparada neste caminho")
+	semAcesso := flag.Bool("sem-acesso", false, "ignora as etiquetas de acesso; serve para comparar perfis")
 	semCH := flag.Bool("sem-hierarquia", false, "consulta pelo Dijkstra da Fase 4, sem preparar a hierarquia")
 	metrica := flag.String("metrica", "tempo", "o que minimizar aqui: tempo ou distancia")
 	caixa := flag.String("caixa", "", "limita o sorteio a um retangulo: minLat,minLon,maxLat,maxLon")
@@ -119,7 +120,7 @@ func main() {
 		minM: *minKm * 1000, maxM: *maxKm * 1000,
 		encaixeMax: *encaixeMax,
 		paralelo:   *paralelo, espera: *espera, pausa: *pausa,
-		salvar: *salvar, semCH: *semCH,
+		salvar: *salvar, semCH: *semCH, semAcesso: *semAcesso,
 	}
 
 	// O OSRM responde a rota mais rapida; comparar a nossa mais curta com a
@@ -161,6 +162,7 @@ type opcoes struct {
 	pausa              time.Duration
 	salvar             string
 	semCH              bool
+	semAcesso          bool
 	caixa              geo.Box
 	temCaixa           bool
 	metrica            graph.Metric
@@ -225,6 +227,7 @@ func rodar(o opcoes) error {
 type motor interface {
 	Len() int
 	Point(graph.NodeID) geo.Point
+	Nearest(geo.Point) (graph.NodeID, float64, bool)
 	NovaConsulta() consulta
 }
 
@@ -239,6 +242,9 @@ type motorCH struct{ c *ch.CH }
 func (m motorCH) Len() int                       { return m.c.Len() }
 func (m motorCH) Point(n graph.NodeID) geo.Point { return m.c.Point(n) }
 func (m motorCH) NovaConsulta() consulta         { return m.c.NewQuery() }
+func (m motorCH) Nearest(p geo.Point) (graph.NodeID, float64, bool) {
+	return m.c.Nearest(p)
+}
 
 // motorGrafo usa o Dijkstra bidirecional da Fase 4.
 type motorGrafo struct {
@@ -248,6 +254,10 @@ type motorGrafo struct {
 
 func (m motorGrafo) Len() int                       { return m.g.Len() }
 func (m motorGrafo) Point(n graph.NodeID) geo.Point { return m.g.Point(n) }
+func (m motorGrafo) Nearest(p geo.Point) (graph.NodeID, float64, bool) {
+	return m.g.Nearest(p)
+}
+
 func (m motorGrafo) NovaConsulta() consulta {
 	return consultaGrafo{s: m.g.NewSearcher(), m: m.m}
 }
@@ -279,7 +289,12 @@ func carregar(o opcoes) (motor, error) {
 
 	fmt.Printf("montando o grafo de %s\n", o.mapa)
 	inicio := time.Now()
-	g, err := graph.BuildFile(o.mapa, graph.Car())
+	perfil := graph.Car()
+	if o.semAcesso {
+		perfil.Acesso = nil
+		fmt.Println("ignorando as etiquetas de acesso")
+	}
+	g, err := graph.BuildFile(o.mapa, perfil)
 	if err != nil {
 		return nil, err
 	}
@@ -308,29 +323,62 @@ func carregar(o opcoes) (motor, error) {
 
 type par struct{ de, para graph.NodeID }
 
-// sortearPares escolhe pares de cruzamentos do proprio grafo.
+// sortearPares sorteia coordenadas no retangulo e as encaixa em cruzamentos.
 //
-// Sortear coordenadas soltas dentro do retangulo do extrato seria pior: cada
-// motor encaixaria a sua maneira, e boa parte do erro medido seria a
-// diferenca entre os dois encaixes, nao entre as duas rotas. Usando
-// coordenadas que ja sao de cruzamentos, o OSRM encaixa praticamente no mesmo
-// lugar -- e o quanto ele se afastou vem na resposta, para os pares em que
-// isso nao valeu serem descartados.
+// # Por que coordenadas, e nao indices de no
+//
+// A primeira versao sorteava indices do grafo direto. Funcionava para medir a
+// qualidade de uma versao, e nao servia para comparar duas: mudar o perfil
+// muda quantas vias entram, os indices deslocam, e a amostra vira outra. Uma
+// mudanca de perfil aparecia misturada com uma troca de amostra, e nao havia
+// como saber qual dos dois moveu o numero.
+//
+// Sorteando coordenadas e encaixando depois, a amostra e a mesma enquanto os
+// cruzamentos continuarem existindo -- que e o caso para quase todos.
+//
+// # Por que ainda se encaixa antes de perguntar
+//
+// As coordenadas mandadas ao OSRM sao as dos cruzamentos, e nao as sorteadas.
+// Cada motor encaixa a sua maneira, e mandar a coordenada crua faria boa parte
+// do erro medido ser a diferenca entre os dois encaixes, e nao entre as duas
+// rotas. Sobre um cruzamento os dois concordam, e o quanto o OSRM se afastou
+// vem na resposta dele.
 func sortearPares(m motor, o opcoes) []par {
 	r := rand.New(rand.NewSource(o.semente))
 	pares := make([]par, 0, o.n)
 
-	dentro := func(n graph.NodeID) bool {
-		return !o.temCaixa || o.caixa.Contains(m.Point(n))
+	caixa := o.caixa
+	if !o.temCaixa {
+		return nil // sem retangulo nao ha onde sortear coordenada
+	}
+
+	// Encaixe folgado: a coordenada cai no mato e o cruzamento mais proximo
+	// pode estar a alguns quilometros. Longe demais e uma regiao sem estrada
+	// mapeada, e o par nao diz nada sobre roteamento.
+	const encaixeMaximo = 2000.0
+
+	sortear := func() (graph.NodeID, bool) {
+		p := geo.Point{
+			Lat: caixa.MinLat + r.Float64()*(caixa.MaxLat-caixa.MinLat),
+			Lon: caixa.MinLon + r.Float64()*(caixa.MaxLon-caixa.MinLon),
+		}
+		n, metros, ok := m.Nearest(p)
+		if !ok || metros > encaixeMaximo {
+			return graph.NoNode, false
+		}
+		return n, true
 	}
 
 	// Um teto de tentativas: num extrato recortado, ou com uma caixa
 	// apertada, pode simplesmente nao haver pares na faixa pedida, e o
 	// programa precisa dizer isso em vez de girar para sempre.
 	for tentativas := 0; len(pares) < o.n && tentativas < o.n*500; tentativas++ {
-		de := graph.NodeID(r.Intn(m.Len()))
-		para := graph.NodeID(r.Intn(m.Len()))
-		if de == para || !dentro(de) || !dentro(para) {
+		de, ok := sortear()
+		if !ok {
+			continue
+		}
+		para, ok := sortear()
+		if !ok || de == para {
 			continue
 		}
 		reta := geo.Haversine(m.Point(de), m.Point(para))

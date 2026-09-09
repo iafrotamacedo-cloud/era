@@ -304,6 +304,62 @@ velocidades genéricas do `graph.Car()`, que não foram medidas em operação
 nenhuma. Não é problema de etiqueta: é calibração, e a saída acordada é o
 `dist.Calibrate` da Fase 2, que mede velocidade efetiva a partir do hodômetro.
 
+### As etiquetas de acesso, e o que elas não mudaram
+
+O `access` do OpenStreetMap tem **precedência**, não acumulação: vale a chave
+mais específica que existir, e as demais nem são olhadas. Uma servidão com
+
+```
+access=private
+motor_vehicle=yes
+```
+
+está liberada para carro. E uma via `access=yes` com `motor_vehicle=no` está
+fechada. O modelo anterior olhava pares chave=valor soltos e errava nos dois
+sentidos.
+
+Foi trocado por uma lista de chaves em ordem de especificidade —
+`motor_vehicle`, `vehicle`, `access` — e um conjunto de valores que negam. O
+que fica de fora é permitido, e **essa lista é uma decisão de logística**:
+`destination`, `delivery` e `customers` descrevem exatamente o caminhão que vai
+entregar. Bloqueá-los faria a roteirização recusar o condomínio, o posto e a
+fazenda — os lugares para onde a entrega vai.
+
+O efeito medido:
+
+| | Sem acesso | Com acesso |
+|---|---|---|
+| Vias no grafo | 1.784.370 | 1.749.627 |
+| Cruzamentos | 2.967.019 | 2.915.025 |
+| Rotas diferentes em 150 pares | — | **nenhuma** |
+
+Tira 34.743 vias, 1,9% da malha, e **não muda uma única rota** da amostra. As
+vias bloqueadas são servidões e áreas fechadas que nenhuma rota intermunicipal
+usa. O valor da correção está nos casos que a amostra não cobre — entrega
+urbana em condomínio fechado, via de serviço particular —, onde rotear por
+dentro seria erro de verdade.
+
+Vale registrar assim, com o número: a mudança está certa e não melhora nada
+que se meça aqui.
+
+### A amostra precisou ficar estável
+
+A primeira versão do comparador sorteava índices de nó do grafo. Servia para
+medir a qualidade de uma versão e **não servia para comparar duas**: mudar o
+perfil muda quantas vias entram, os índices deslocam, e a amostra vira outra.
+A primeira tentativa de medir o `access` deu p90 de 6,84% para 13,56%, e o
+que tinha mudado era a amostra.
+
+Agora sorteia coordenadas no retângulo e encaixa depois. Enquanto os
+cruzamentos continuarem existindo — que é o caso de quase todos — a amostra é
+a mesma entre execuções, e um A/B mede o que se quer medir.
+
+A amostra por coordenada é mais difícil que a por índice: alcança lugares
+remotos onde o encaixe fica a quilômetros e a malha é rala. Com ela, a mediana
+fica em 0,33% e o p90 em 16,1%. Os números desta seção e das anteriores vêm de
+amostragens diferentes e **não devem ser comparados entre si** — daqui para a
+frente, podem.
+
 ### O erro de método que quase virou diagnóstico errado
 
 A primeira rodada deu mediana de 6,81% com viés de −6,81%: nossas rotas

@@ -30,8 +30,27 @@ type Profile struct {
 	SentidoUnicoImplicito map[string]string
 
 	// Bloqueadas sao pares chave=valor que excluem a via, mesmo que o tipo
-	// dela esteja em SpeedKmh.
-	Bloqueadas map[string]string
+	// dela esteja em SpeedKmh. Uma chave pode ter varios valores.
+	Bloqueadas map[string][]string
+
+	// Acesso lista as chaves de permissao, da mais especifica para a mais
+	// geral.
+	//
+	// A primeira que existir na via decide, e as demais nem sao consultadas.
+	// E assim que o OpenStreetMap resolve permissao, e sem isso o modelo erra
+	// nos dois sentidos: uma servidao marcada access=private mas
+	// motor_vehicle=yes ficaria de fora do grafo, e uma via liberada de modo
+	// geral mas com motor_vehicle=no entraria.
+	Acesso []string
+
+	// AcessoNegado sao os valores dessas chaves que excluem a via.
+	//
+	// O que NAO esta aqui e permitido, e a lista do que fica de fora e uma
+	// decisao sobre logistica, nao sobre o formato: destination, delivery e
+	// customers descrevem exatamente o caminhao que vai entregar. Bloquea-los
+	// faria a roteirizacao recusar o condominio, o posto e a fazenda -- os
+	// lugares para onde a entrega vai.
+	AcessoNegado map[string]bool
 
 	// SurfaceMaxKmh limita a velocidade conforme a etiqueta surface.
 	//
@@ -87,15 +106,32 @@ func Car() Profile {
 			"junction": "roundabout",
 			"highway":  "motorway",
 		},
-		Bloqueadas: map[string]string{
-			// So um valor por chave: Bloqueadas e map[string]string. Fica de
-			// fora access=no, que tambem deveria bloquear -- para os dois
-			// caberem, o campo precisa virar map[string][]string, e isso e
-			// outra mudanca.
-			"access":        "private",
-			"motor_vehicle": "no",
-			"area":          "yes",
+		Bloqueadas: map[string][]string{
+			// Uma via marcada como area nao e caminho: e o desenho de uma
+			// praca, de um patio, de um estacionamento visto de cima.
+			"area": {"yes"},
 		},
+
+		// Da mais especifica para a mais geral. motor_vehicle fala do que
+		// interessa a um carro; vehicle inclui a bicicleta junto; access vale
+		// para todo mundo, inclusive o pedestre.
+		Acesso: []string{"motor_vehicle", "vehicle", "access"},
+
+		AcessoNegado: map[string]bool{
+			"no":      true,
+			"private": true,
+
+			// So o veiculo daquele tipo passa, e nenhum deles e o nosso.
+			"agricultural": true,
+			"forestry":     true,
+			"military":     true,
+			"emergency":    true,
+
+			// Fora daqui, e portanto permitidos: yes, permissive, designated,
+			// destination, delivery, customers. Os tres ultimos sao a decisao
+			// de logistica -- descrevem exatamente quem esta indo entregar.
+		},
+
 		SurfaceMaxKmh: superficiesCarro(),
 	}
 }
@@ -171,10 +207,20 @@ func (p Profile) avaliar(w osm.Way) (via, bool) {
 		return via{}, false
 	}
 
-	for chave, valor := range p.Bloqueadas {
-		if v, ok := w.Tags.Get(chave); ok && v == valor {
-			return via{}, false
+	for chave, valores := range p.Bloqueadas {
+		v, ok := w.Tags.Get(chave)
+		if !ok {
+			continue
 		}
+		for _, bloqueado := range valores {
+			if v == bloqueado {
+				return via{}, false
+			}
+		}
+	}
+
+	if !p.permite(w) {
+		return via{}, false
 	}
 
 	if p.MaxSpeedTag {
@@ -215,6 +261,36 @@ func (p Profile) avaliar(w osm.Way) (via, bool) {
 	}
 
 	return via{speedKmh: velocidade, frente: frente, tras: tras}, true
+}
+
+// permite resolve as etiquetas de acesso da via.
+//
+// A regra do OpenStreetMap e de precedencia, e nao de acumulo: vale a chave
+// mais especifica que existir, e as mais gerais nem sao olhadas. Uma servidao
+// marcada
+//
+//	access=private
+//	motor_vehicle=yes
+//
+// esta liberada para carro, apesar do access. E uma via com
+//
+//	access=yes
+//	motor_vehicle=no
+//
+// esta fechada, apesar do access. Um modelo que so olhasse pares chave=valor
+// erraria nos dois casos, e em sentidos opostos.
+//
+// Sem nenhuma das chaves, a via passa: no OpenStreetMap o silencio quer dizer
+// permitido, e presumir o contrario apagaria a maior parte da malha.
+func (p Profile) permite(w osm.Way) bool {
+	for _, chave := range p.Acesso {
+		v, ok := w.Tags.Get(chave)
+		if !ok {
+			continue
+		}
+		return !p.AcessoNegado[v]
+	}
+	return true
 }
 
 // superficieDe devolve a superficie da via.

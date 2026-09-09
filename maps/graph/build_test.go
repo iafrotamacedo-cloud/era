@@ -608,3 +608,63 @@ func TestAsfaltoGanhaDoBarroNoTempo(t *testing.T) {
 		t.Error("sem penalidade de superficie a rota mais rapida deveria ser a de terra")
 	}
 }
+
+// As etiquetas de acesso do OpenStreetMap tem precedencia, e nao acumulo:
+// vale a mais especifica que existir. Um modelo que so olhasse pares
+// chave=valor erraria nos dois sentidos.
+func TestPrecedenciaDasEtiquetasDeAcesso(t *testing.T) {
+	casos := []struct {
+		nome   string
+		tags   map[string]string
+		aceita bool
+	}{
+		{"sem etiqueta nenhuma", map[string]string{}, true},
+
+		{"access=no", map[string]string{"access": "no"}, false},
+		{"access=private", map[string]string{"access": "private"}, false},
+		{"access=yes", map[string]string{"access": "yes"}, true},
+		{"access=permissive", map[string]string{"access": "permissive"}, true},
+
+		// A decisao de logistica: quem entrega e o transito de destino.
+		{"access=destination", map[string]string{"access": "destination"}, true},
+		{"access=delivery", map[string]string{"access": "delivery"}, true},
+		{"access=customers", map[string]string{"access": "customers"}, true},
+
+		// So aquele veiculo passa, e nenhum deles e o nosso.
+		{"access=agricultural", map[string]string{"access": "agricultural"}, false},
+		{"access=forestry", map[string]string{"access": "forestry"}, false},
+
+		// Precedencia: o especifico manda, nos dois sentidos.
+		{"private liberado para carro", map[string]string{"access": "private", "motor_vehicle": "yes"}, true},
+		{"liberado mas fechado para carro", map[string]string{"access": "yes", "motor_vehicle": "no"}, false},
+		{"vehicle fica entre os dois", map[string]string{"access": "no", "vehicle": "yes"}, true},
+		{"motor_vehicle vence vehicle", map[string]string{"vehicle": "yes", "motor_vehicle": "no"}, false},
+		{"motor_vehicle vence os dois", map[string]string{"access": "no", "vehicle": "no", "motor_vehicle": "destination"}, true},
+	}
+
+	for _, caso := range casos {
+		tags := map[string]string{"highway": "residential"}
+		for k, v := range caso.tags {
+			tags[k] = v
+		}
+
+		nos, refs := ruaReta(1, 3, -3.7)
+		g := montar(t, nos, []viaTeste{{id: 1, refs: refs, tags: tags}})
+
+		entrou := g.Len() > 0
+		if entrou != caso.aceita {
+			t.Errorf("%s: entrou no grafo = %v, esperado %v (%v)", caso.nome, entrou, caso.aceita, caso.tags)
+		}
+	}
+}
+
+// area=yes nao e caminho: e o desenho de um patio visto de cima.
+func TestAreaNaoEhCaminho(t *testing.T) {
+	nos, refs := ruaReta(1, 3, -3.7)
+	g := montar(t, nos, []viaTeste{
+		{id: 1, refs: refs, tags: map[string]string{"highway": "service", "area": "yes"}},
+	})
+	if g.Len() != 0 {
+		t.Errorf("uma area entrou no grafo com %d nos", g.Len())
+	}
+}

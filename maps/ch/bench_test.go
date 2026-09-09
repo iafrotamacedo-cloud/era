@@ -1,6 +1,7 @@
 package ch
 
 import (
+	"bytes"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -134,5 +135,48 @@ func BenchmarkPreparoEscala(b *testing.B) {
 				sink = float64(c.Arcs())
 			}
 		})
+	}
+}
+
+// A comparacao que justifica o .eramap existir: carregar contra preparar.
+//
+// Sao a mesma hierarquia, chegando pelos dois caminhos possiveis.
+func BenchmarkCarregarEramap(b *testing.B) {
+	g := grafoDeGrade(b, 60, true)
+	c, err := Prepare(g, graph.Distance)
+	if err != nil {
+		b.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := c.Save(&buf); err != nil {
+		b.Fatal(err)
+	}
+	dados := buf.Bytes()
+	b.SetBytes(int64(len(dados)))
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		lida, err := Load(bytes.NewReader(dados))
+		if err != nil {
+			b.Fatal(err)
+		}
+		sink = float64(lida.Arcs())
+	}
+}
+
+func BenchmarkGravarEramap(b *testing.B) {
+	g := grafoDeGrade(b, 60, true)
+	c, err := Prepare(g, graph.Distance)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var buf bytes.Buffer
+		if err := c.Save(&buf); err != nil {
+			b.Fatal(err)
+		}
+		sink = float64(buf.Len())
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/iafrotamacedo-cloud/era/maps/geo"
 	"github.com/iafrotamacedo-cloud/era/maps/graph"
 )
 
@@ -404,10 +405,16 @@ func (p *preparo) vivos(lista []arcoTrabalho) []arcoTrabalho {
 // precisa, e descartar o resto corta a estrutura quase pela metade.
 func (p *preparo) montar() *CH {
 	c := &CH{
-		g: p.g, m: p.m,
+		m:       p.m,
+		pontos:  make([]geo.Point, p.n),
+		osmIDs:  make([]int64, p.n),
 		posicao: p.posicao,
 		offsets: make([]uint32, p.n+1),
 		stats:   p.stats,
+	}
+	for v := graph.NodeID(0); int(v) < p.n; v++ {
+		c.pontos[v] = p.g.Point(v)
+		c.osmIDs[v] = p.g.OSMID(v)
 	}
 
 	type pendente struct {

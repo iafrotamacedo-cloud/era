@@ -129,10 +129,42 @@ têm ida diferente da volta.
 Os caminhos desempacotados também são verificados rua por rua: um custo certo
 com um caminho impossível seria pior que um erro, porque parece bom.
 
-## O que a Fase 5 ainda não entrega
+### O `.eramap` guarda a hierarquia pronta
 
-Duas coisas prometidas em READMEs anteriores **não** foram feitas, e vale
-dizer com todas as letras:
+O preparo é caro e cresce mais que linearmente. Sem gravar o resultado, todo
+processo que sobe paga esse custo de novo:
+
+| | Tempo |
+|---|---|
+| `Prepare` (3.600 cruzamentos) | 461 ms |
+| `Load` do `.eramap` | **0,85 ms** |
+
+544×, a 700 MB/s. Extrapolando para um estado, é a diferença entre dezenas de
+minutos e uma fração de segundo.
+
+```go
+c, _ := ch.Prepare(g, graph.Time)   // uma vez, na máquina que preparar
+c.SaveFile("ceara.eramap")
+
+c, _ := ch.LoadFile("ceara.eramap") // em toda partida do processo
+```
+
+O arquivo é **autossuficiente**: carregá-lo não exige o `.osm.pbf` que o
+gerou. É o ponto inteiro — uma hierarquia que ainda precisasse do mapa
+original não economizaria nada. Por isso o `CH` guarda as próprias
+coordenadas e identificadores, e `Nearest` funciona depois de carregar.
+
+Escrito à mão, com cabeçalho mágico e byte de versão, como o formato do
+`dist`. Não é `gob`: `gob` amarra o arquivo em disco à forma exata das structs
+Go, e renomear um campo passaria a quebrar a leitura de arquivos antigos sem
+que nada avisasse.
+
+`Load` confere as invariantes, e não só os tamanhos — posições são uma
+permutação, índices crescem, todo arco sobe. Um arquivo corrompido do tamanho
+certo passaria pela checagem de tamanho e quebraria no meio de uma consulta,
+que é muito pior de diagnosticar do que uma recusa na abertura.
+
+## O que a Fase 5 ainda não entrega
 
 **A comparação com o OSRM.** O texto do roteiro diz que a fase termina quando
 a rota bater com a do OSRM em ±1%. Isso não foi verificado. Exige um extrato
@@ -140,21 +172,6 @@ real e uma instância do OSRM para comparar, e o repositório não guarda dados
 de mapa. O que está verificado é a consistência interna — o CH concorda com um
 Dijkstra que concorda com a implementação óbvia. É uma cadeia sólida, mas não
 é a mesma afirmação.
-
-**O formato `.eramap`.** A serialização do grafo pronto foi prometida nas
-Fases 3 e 4 e não está aqui. Ela importa mais do que parece, porque o preparo
-é caro:
-
-| Nós | Preparo |
-|---|---|
-| 900 | 43 ms |
-| 2.025 | 210 ms |
-| 3.600 | 447 ms |
-| 6.400 | 1,26 s |
-
-Cresce em torno de O(n^1,7). Extrapolando para os ~500 mil cruzamentos de um
-estado, são dezenas de minutos — aceitável uma vez, inaceitável a cada
-partida do processo. Sem `.eramap`, o motor não sobe rápido.
 
 ## O que a Fase 4 entrega
 

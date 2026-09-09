@@ -43,7 +43,9 @@ package ch
 
 import (
 	"fmt"
+	"sync"
 
+	"github.com/iafrotamacedo-cloud/era/maps/geo"
 	"github.com/iafrotamacedo-cloud/era/maps/graph"
 )
 
@@ -77,8 +79,17 @@ func (a arco) custo(m graph.Metric) float64 {
 //
 // E imutavel depois de construido, e seguro para uso concorrente.
 type CH struct {
-	g *graph.Graph
 	m graph.Metric
+
+	// Coordenada e identificador de cada no, copiados do grafo na construcao.
+	//
+	// A hierarquia guarda os seus proprios, e nao um ponteiro para o grafo de
+	// origem, porque ela precisa sobreviver sozinha: depois de Load, o .osm.pbf
+	// que a gerou pode nem estar na maquina. Sem isso o formato nao teria
+	// sentido -- carregar uma hierarquia que ainda exige o mapa original nao
+	// economiza nada.
+	pontos []geo.Point
+	osmIDs []int64
 
 	// Posicao de cada no na hierarquia. Quem foi contraido primeiro e menos
 	// importante e tem posicao menor.
@@ -96,6 +107,11 @@ type CH struct {
 	tras    []bool
 
 	stats Stats
+
+	// Indice espacial montado na primeira busca por proximidade. Quem so
+	// consulta entre nos ja conhecidos nao paga por ele.
+	umaVez sync.Once
+	grade  *geo.Grid
 }
 
 // Metric devolve a grandeza que esta hierarquia minimiza.
@@ -105,8 +121,41 @@ type CH struct {
 // precisar das duas prepara duas.
 func (c *CH) Metric() graph.Metric { return c.m }
 
-// Graph devolve o grafo original, para coordenadas e identificadores.
-func (c *CH) Graph() *graph.Graph { return c.g }
+// Point devolve onde um no esta.
+func (c *CH) Point(n graph.NodeID) geo.Point {
+	c.conferir(n)
+	return c.pontos[n]
+}
+
+// OSMID devolve o identificador do no no OpenStreetMap.
+func (c *CH) OSMID(n graph.NodeID) int64 {
+	c.conferir(n)
+	return c.osmIDs[n]
+}
+
+// Nearest acha o no da hierarquia mais proximo de uma coordenada.
+//
+// E o que liga um endereco a estrutura: o cliente tem uma coordenada, a
+// consulta precisa de um cruzamento. Vale olhar a distancia devolvida --
+// centenas de metros quer dizer que o ponto caiu longe de qualquer estrada.
+func (c *CH) Nearest(p geo.Point) (graph.NodeID, float64, bool) {
+	if len(c.pontos) == 0 || !p.Valid() {
+		return graph.NoNode, 0, false
+	}
+
+	c.umaVez.Do(func() {
+		c.grade = geo.NewGridForRadius(500)
+		for i, pt := range c.pontos {
+			c.grade.Add(i, pt)
+		}
+	})
+
+	achados := c.grade.Nearest(p, 1)
+	if len(achados) == 0 {
+		return graph.NoNode, 0, false
+	}
+	return graph.NodeID(achados[0].ID), achados[0].Meters, true
+}
 
 // Len devolve quantos nos a hierarquia tem.
 func (c *CH) Len() int { return len(c.posicao) }

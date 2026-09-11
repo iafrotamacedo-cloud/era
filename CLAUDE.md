@@ -11,6 +11,19 @@ Monorepo de motores em Go puro. Três motores independentes sob um `go.mod`:
 
 `docs/` é documentação, não código. O motor de documentos é `documents/`.
 
+## Diário compartilhado
+
+`diario/AAAA-MM-DD.md` — um arquivo por dia, e as três sessões acrescentam
+uma entrada curta sempre que fizerem algo que vale as outras saberem: fase
+fechada, mudança em algo compartilhado (`internal/protowire`, `go.mod`,
+`CLAUDE.md`, o CI), problema encontrado, commit que reescreveu histórico.
+**Só acrescenta, nunca edita** o que outra sessão escreveu. Regras e formato
+completos em `diario/README.md` — leia antes da primeira entrada.
+
+Antes de mexer em algo que pode se cruzar com outro motor, vale abrir o
+diário de hoje (e o de ontem, se for cedo) para ver o que as outras sessões
+andaram fazendo.
+
 ## Várias sessões trabalham aqui ao mesmo tempo
 
 Este repositório costuma ter **três sessões de Claude Code abertas na mesma

@@ -9,10 +9,13 @@ inteiro ou adivinhar o que mudou por baixo dos pés.
 O monorepo tem três sessões de Claude Code rodando ao mesmo tempo na mesma
 pasta, cada uma cuidando de um motor. Isso já causou conflito de verdade —
 commits que colidiram, trabalho de uma sessão indo parar em cima do de outra.
-O diário não substitui o cuidado com `git add` seletivo (ver `CLAUDE.md`), mas
-dá visibilidade: antes de mexer em algo que pode se cruzar com outro motor
-(o `internal/protowire` compartilhado, o `go.mod` raiz, o `CLAUDE.md`, o CI),
-vale olhar se alguém mais mexeu ali recentemente.
+O diário não substitui o cuidado com `git add` seletivo (ver `CLAUDE.md`),
+mas dá visibilidade.
+
+**Leia o arquivo de hoje antes de fazer qualquer coisa na sessão** — não só
+quando for mexer em algo compartilhado. É a primeira ação, não uma consulta
+ocasional: o objetivo é sempre saber o que as outras duas sessões andaram
+fazendo antes de tomar qualquer decisão nesta.
 
 ## Formato
 

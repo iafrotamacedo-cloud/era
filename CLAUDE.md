@@ -13,16 +13,20 @@ Monorepo de motores em Go puro. Três motores independentes sob um `go.mod`:
 
 ## Diário compartilhado
 
-`diario/AAAA-MM-DD.md` — um arquivo por dia, e as três sessões acrescentam
-uma entrada curta sempre que fizerem algo que vale as outras saberem: fase
-fechada, mudança em algo compartilhado (`internal/protowire`, `go.mod`,
-`CLAUDE.md`, o CI), problema encontrado, commit que reescreveu histórico.
-**Só acrescenta, nunca edita** o que outra sessão escreveu. Regras e formato
-completos em `diario/README.md` — leia antes da primeira entrada.
+**Leia o diário de hoje ANTES de fazer qualquer coisa nesta sessão** —
+antes do primeiro `git pull`, antes de tocar em qualquer arquivo. É a
+primeira ação da sessão, não uma consulta ocasional.
 
-Antes de mexer em algo que pode se cruzar com outro motor, vale abrir o
-diário de hoje (e o de ontem, se for cedo) para ver o que as outras sessões
-andaram fazendo.
+`diario/AAAA-MM-DD.md` — um arquivo por dia. Leia o de hoje; se a sessão
+começar cedo, vale abrir o de ontem também, porque outra sessão pode ter
+trabalhado depois da sua última leitura. Se o arquivo de hoje ainda não
+existir, crie com o cabeçalho descrito em `diario/README.md`.
+
+As três sessões acrescentam uma entrada curta sempre que fizerem algo que
+vale as outras saberem: fase fechada, mudança em algo compartilhado
+(`internal/protowire`, `go.mod`, `CLAUDE.md`, o CI), problema encontrado,
+commit que reescreveu histórico. **Só acrescenta, nunca edita** o que outra
+sessão escreveu. Regras e formato completos em `diario/README.md`.
 
 ## Várias sessões trabalham aqui ao mesmo tempo
 

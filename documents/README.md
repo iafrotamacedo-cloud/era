@@ -176,14 +176,38 @@ Metade deste motor já existe. `tensor`, `kernel`, `nn`, `onnx` e `graph` não
 têm nada de específico de rosto: matmul bloqueado, im2col, depthwise, parser
 de `.onnx` e executor de grafo servem igual a uma rede de detecção de texto.
 
-O que este motor precisa e o `faces` ainda não tem, e que volta para lá:
+O que este motor precisa e o `faces` ainda não tem, conferido em 14/09/2026
+lendo o código-fonte do PaddleOCR (`ppocr/modeling/necks/db_fpn.py` e
+`ppocr/modeling/heads/det_db_head.py`) em vez de supor pela arquitetura em
+geral — a suposição anterior estava errada em metade dos itens:
 
-| Camada | Para quê |
-|---|---|
-| `Upsample` bilinear, `Concat` | o FPN do detector |
-| `Softmax`, `LayerNorm`, `GELU` | o reconhecedor |
+| Camada | Para quê | Já tem? |
+|---|---|---|
+| `ConvTranspose` | as duas camadas de upsample aprendido no fim do `DBHead` (kernel 2, stride 2) — isto é confirmado, não suposição | **falta** |
+| `Resize`, modo nearest | o upsample da FPN inteira (`DBFPN`, `RSEFPN`, `LKPAN` — todas as variantes), e mais um upsample bilinear no `DBHead` | **já tem** — `Resize` está no `faces/graph` |
+| `Concat` | juntar os níveis da FPN | **já tem** |
+| `LayerNormalization`, `Erf` (GELU) | o SVTR (fase 5, reconhecedor — não o detector) | falta, mas não bloqueia a fase 3 |
+
+Ou seja: a fase 3 (`detect`) precisa de **uma única op nova** no `faces/graph`
+— `ConvTranspose` — não das três que uma leitura por arquitetura típica
+sugeria. O resto do que se supunha necessário já existe ou pertence à fase
+5, não à 3.
 
 ## Escolhas de modelo
+
+**Detecção: DBNet, via PP-OCRv4 do PaddleOCR.** Pesquisado em 14/09/2026.
+Licença confirmada na fonte primária (`LICENSE` do repositório
+`PaddlePaddle/PaddleOCR`, não um agregador): **Apache License 2.0** —
+diferente do caso InsightFace (pesos `buffalo_*` restritos a pesquisa), este
+não tem essa restrição. O modelo pronto (`ch_PP-OCRv4_det_infer`, exportado
+para `.onnx` por terceiros a partir do checkpoint oficial) está disponível
+em alguns espelhos no Hugging Face; baixar e conferir a licença do espelho
+em si (não só do modelo original) antes de usar — repositório de terceiro
+pode reempacotar sob termo diferente.
+
+A necessidade de `ConvTranspose` no `faces/graph` (seção anterior) vem
+diretamente de ler esse código: é o único ponto de toda a arquitetura
+DBNet/PaddleOCR que não se resolve com o que o `faces/graph` já tem.
 
 **Reconhecimento: SVTR, não CRNN.** Contraintuitivo — o transformer parece o
 caminho mais pesado. Em Go puro é o inverso:
@@ -209,4 +233,6 @@ dewarp, reconhecimento e extração.
 
 ## Estado
 
-Não iniciado. Arquitetura definida, código nenhum.
+Fases 1, 2 e 4 prontas; fases 6 e 7 parciais (ver Roteiro). Fase 3
+(detecção) ainda não começou, mas já sabe exatamente o que precisa: um
+`.onnx` do PP-OCRv4 e a op `ConvTranspose` no `faces/graph`.

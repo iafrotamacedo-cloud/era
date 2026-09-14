@@ -120,16 +120,23 @@ si duas vezes — alimenta o reconhecedor e decide o dewarp.
 | 1 | `imgproc` | I/O, cinza, normalização de iluminação, amostragem bilinear | **pronto** |
 | 2 | `geom` | polígono, homografia (com `RemapHomography`, que já cobre a retificação de N1), ajuste de curva, remap | **pronto** |
 | 3 | `detect` | DBNet + contornos + expansão de polígono | — |
-| 4 | `dewarp` | medidor de deformação (decide N0/N1/N2/N3 a partir dos polígonos), retificação por linha de N2 — e N3 depois | medidor **pronto**; retificação por linha (amostrar ao longo da normal da curva) falta |
+| 4 | `dewarp` | medidor de deformação (decide N0/N1/N2/N3 a partir dos polígonos), retificação por linha de N2 — e N3 depois | **pronto** (N3 fica para quando entrar rede) |
 | 5 | `recog` | SVTR + decodificação CTC, charset pt-BR | — |
 | 6 | `layout` | linhas, colunas, tabelas, ordem de leitura | — |
 | 7 | `extract` | campos tipados por tipo de documento | — |
 
-O medidor de deformação (fase 4) foi adiantado fora de ordem porque só
-depende de `geom` — não de rede nem de decisão pendente. Ele consome
-polígonos, então antes da fase 3 (`detect`) existir só dá para testar com
-polígonos sintéticos; o teste real, com um detector de verdade alimentando
-ele, fica para quando a fase 3 fechar.
+A fase 4 (`dewarp`) foi adiantada fora de ordem porque só depende de
+`geom` — não de rede nem de decisão pendente. `geom.RemapCurve` amostra uma
+faixa da imagem seguindo uma curva, em espaçamento igual de comprimento de
+arco (não de x, para não comprimir o texto num trecho mais inclinado da
+curva) e ao longo da normal local. `RectifyLine` liga isso à baseline de uma
+linha de texto: ajusta a curva pelos pontos e delega a amostragem.
+
+Ela consome polígonos, então antes da fase 3 (`detect`) existir só dá para
+testar com polígono sintético; o teste com um detector de verdade
+alimentando ela fica para quando a fase 3 fechar. N3 (o caso que N2 não
+resolve — a compressão em profundidade perto da dobra) continua não
+implementado: precisa de rede.
 
 A Fase 5 é o marco real: fotografar um papel na mão e o texto sair certo.
 Antes disso é infraestrutura.

@@ -117,13 +117,19 @@ si duas vezes — alimenta o reconhecedor e decide o dewarp.
 
 | Fase | Pacote | Entrega | Estado |
 |---|---|---|---|
-| 1 | `imgproc` | I/O, cinza, normalização de iluminação, amostragem bilinear | — |
-| 2 | `geom` | polígono, homografia, ajuste de curva, remap | — |
+| 1 | `imgproc` | I/O, cinza, normalização de iluminação, amostragem bilinear | **pronto** |
+| 2 | `geom` | polígono, homografia (com `RemapHomography`, que já cobre a retificação de N1), ajuste de curva, remap | **pronto** |
 | 3 | `detect` | DBNet + contornos + expansão de polígono | — |
-| 4 | `dewarp` | medidor de deformação, N1, N2 — e N3 depois | — |
+| 4 | `dewarp` | medidor de deformação (decide N0/N1/N2/N3 a partir dos polígonos), retificação por linha de N2 — e N3 depois | medidor **pronto**; retificação por linha (amostrar ao longo da normal da curva) falta |
 | 5 | `recog` | SVTR + decodificação CTC, charset pt-BR | — |
 | 6 | `layout` | linhas, colunas, tabelas, ordem de leitura | — |
 | 7 | `extract` | campos tipados por tipo de documento | — |
+
+O medidor de deformação (fase 4) foi adiantado fora de ordem porque só
+depende de `geom` — não de rede nem de decisão pendente. Ele consome
+polígonos, então antes da fase 3 (`detect`) existir só dá para testar com
+polígonos sintéticos; o teste real, com um detector de verdade alimentando
+ele, fica para quando a fase 3 fechar.
 
 A Fase 5 é o marco real: fotografar um papel na mão e o texto sair certo.
 Antes disso é infraestrutura.

@@ -122,8 +122,8 @@ si duas vezes — alimenta o reconhecedor e decide o dewarp.
 | 3 | `detect` | DBNet + contornos + expansão de polígono | — |
 | 4 | `dewarp` | medidor de deformação (decide N0/N1/N2/N3 a partir dos polígonos), retificação por linha de N2 — e N3 depois | **pronto** (N3 fica para quando entrar rede) |
 | 5 | `recog` | SVTR + decodificação CTC, charset pt-BR | — |
-| 6 | `layout` | linhas, colunas, tabelas, ordem de leitura | — |
-| 7 | `extract` | campos tipados por tipo de documento | — |
+| 6 | `layout` | linhas, colunas, tabelas, ordem de leitura | parcial — linhas e ordem de leitura de 1 coluna **prontas**; colunas e tabela faltam |
+| 7 | `extract` | campos tipados por tipo de documento | parcial — CNPJ, CPF, data e valor monetário **prontos**; ligar aos campos de cada tipo de documento falta |
 
 A fase 4 (`dewarp`) foi adiantada fora de ordem porque só depende de
 `geom` — não de rede nem de decisão pendente. `geom.RemapCurve` amostra uma
@@ -137,6 +137,32 @@ testar com polígono sintético; o teste com um detector de verdade
 alimentando ela fica para quando a fase 3 fechar. N3 (o caso que N2 não
 resolve — a compressão em profundidade perto da dobra) continua não
 implementado: precisa de rede.
+
+As fases 6 e 7 também foram adiantadas em parte, cada uma na fatia que não
+depende de reconhecimento nenhum:
+
+**`layout`** organiza palavras soltas (posição + texto) em linhas, só por
+geometria — sobreposição vertical das caixas decide o que é a mesma linha;
+ordem horizontal dentro da linha e vertical entre linhas dá a ordem de
+leitura. Cobre certo um bloco de texto de coluna única, que é a maior parte
+dos campos de nota fiscal, boleto e ordem de compra. **Não** cobre
+múltiplas colunas nem tabela: separar coluna de linha por geometria pura
+exige calibrar um limiar de espaçamento horizontal contra documento real,
+que este motor ainda não tem. Fica registrado como pendência em vez de
+chutado.
+
+**`extract`** reconhece CNPJ, CPF, data (numérica e por extenso) e valor
+monetário dentro de texto já lido. CNPJ e CPF têm dígito verificador — um
+algoritmo publicado, não um palpite — então dá para varrer texto livre com
+confiança: `FindCNPJs`/`FindCPFs` descartam qualquer sequência de dígitos
+que não feche a conta. Data e dinheiro não têm verificação equivalente,
+então só há o parser (`ParseDateBR`, `ParseMoney`), aplicado a um campo já
+isolado por `layout` ou por uma etiqueta conhecida ("Total:") — nunca um
+buscador de texto livre, que erraria demais colidindo com quantidade,
+número de pedido, CEP. `Money` é inteiro (centavos), não `float64`: dinheiro
+não admite o erro de arredondamento binário. Falta ligar isso aos campos
+específicos de cada tipo de documento — o que só faz sentido com a fase 5
+(reconhecimento) alimentando de verdade.
 
 A Fase 5 é o marco real: fotografar um papel na mão e o texto sair certo.
 Antes disso é infraestrutura.

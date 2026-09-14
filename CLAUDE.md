@@ -1,15 +1,17 @@
 # ERA
 
-Monorepo de motores em Go puro. Três motores independentes sob um `go.mod`:
+Monorepo de motores em Go puro. Dois motores independentes sob um `go.mod`:
 
 | Diretório | Motor | Estado |
 |---|---|---|
 | `faces/` | reconhecimento facial | Fase 6 de 7 |
 | `maps/` | distâncias e rotas rodoviárias | Fase 5 de 7 |
-| `documents/` | leitura de documentos | não iniciado |
 | `internal/protowire/` | protobuf compartilhado — `faces` lê `.onnx`, `maps` lê `.osm.pbf` | pronto |
 
-`docs/` é documentação, não código. O motor de documentos é `documents/`.
+O motor de leitura de documentos (ERA READ) saiu deste monorepo por decisão
+explícita do usuário em 14/09/2026 e vive em repositório próprio,
+`iafrotamacedo-cloud/era-read`. O histórico anterior (`documents/`)
+continua nos commits deste repositório antes da remoção.
 
 ## Diário compartilhado
 
@@ -22,15 +24,15 @@ começar cedo, vale abrir o de ontem também, porque outra sessão pode ter
 trabalhado depois da sua última leitura. Se o arquivo de hoje ainda não
 existir, crie com o cabeçalho descrito em `diario/README.md`.
 
-As três sessões acrescentam uma entrada curta sempre que fizerem algo que
-vale as outras saberem: fase fechada, mudança em algo compartilhado
+As sessões acrescentam uma entrada curta sempre que fizerem algo que vale
+as outras saberem: fase fechada, mudança em algo compartilhado
 (`internal/protowire`, `go.mod`, `CLAUDE.md`, o CI), problema encontrado,
 commit que reescreveu histórico. **Só acrescenta, nunca edita** o que outra
 sessão escreveu. Regras e formato completos em `diario/README.md`.
 
 ## Várias sessões trabalham aqui ao mesmo tempo
 
-Este repositório costuma ter **três sessões de Claude Code abertas na mesma
+Este repositório costuma ter **duas sessões de Claude Code abertas na mesma
 pasta**, uma por motor. Elas dividem uma árvore de trabalho e um índice do
 git. Isso muda como se commita.
 

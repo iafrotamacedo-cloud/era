@@ -16,7 +16,12 @@ Não são sistemas. Não têm banco, tela, login nem nuvem.
 |---|---|---|
 | [`faces`](faces/) | reconhecimento facial: imagem → vetor de identidade | Fase 5 de 7 |
 | [`maps`](maps/) | distâncias e rotas rodoviárias, roteirização | Fase 5 de 7 |
-| [`documents`](documents/) | leitura de documentos | não iniciado |
+
+O motor de leitura de documentos (ERA READ) vive em repositório próprio:
+[`iafrotamacedo-cloud/era-read`](https://github.com/iafrotamacedo-cloud/era-read).
+Começou aqui dentro, em `documents/`, e saiu por decisão explícita — o
+código anterior a essa mudança continua no histórico do git deste
+repositório, em commits que tocam `documents/`.
 
 Cada motor tem seu próprio README com a arquitetura, os números medidos e o
 roteiro de fases.
@@ -42,14 +47,14 @@ Os motores parecem independentes e não são, em dois pontos concretos:
 
 **Código compartilhado que já existe.** O `.onnx` do `faces` e o `.osm.pbf`
 do `maps` são ambos protobuf. O leitor de wire format que os dois precisam é
-o mesmo. Em repositórios separados isso vira um quarto repositório ou uma
+o mesmo. Em repositórios separados isso vira um terceiro repositório ou uma
 duplicação que sai de sincronia.
 
 **As mesmas promessas, verificadas do mesmo jeito.** Os dois CIs eram
 praticamente o mesmo arquivo — e já tinham começado a divergir antes da
 fusão. Um só não diverge.
 
-O que se paga por isso: uma versão vale para os três, e quem importar só o
+O que se paga por isso: uma versão vale para os dois, e quem importar só o
 `maps` baixa o módulo inteiro. O compilador só constrói o que é importado,
 então o custo é de download, não de binário.
 
@@ -59,8 +64,7 @@ então o custo é de download, não de binário.
 era/
 ├── go.mod          module github.com/iafrotamacedo-cloud/era
 ├── faces/          tensor, kernel, nn, onnx, embed, detect, index
-├── maps/           geo, dist, osm, graph, ch, geocode, vrp
-└── documents/      a definir
+└── maps/           geo, dist, osm, graph, ch, geocode, vrp
 ```
 
 Os caminhos de importação seguem as pastas:

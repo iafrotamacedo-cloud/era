@@ -24,6 +24,11 @@ dados/
 .tmp-*/
 .tmp-*
 
+# ERA READ: repositorio proprio (github.com/iafrotamacedo-cloud/era-read),
+# checado localmente dentro desta mesma pasta por conveniencia. Tem o
+# proprio .git -- nunca deve entrar como arquivo dentro deste repositorio.
+Era-Read/
+
 # ambiente
 .env
 .DS_Store

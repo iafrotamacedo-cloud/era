@@ -58,15 +58,20 @@ func OpcoesPadrao() Options {
 	return Options{Size: 112, Scale: [3]float32{1, 1, 1}}
 }
 
-// OpcoesSFace devolve o pre-processamento que o SFace do OpenCV Zoo espera:
-// BGR, valores de 0 a 255, sem normalizacao.
+// OpcoesSFace devolve o pre-processamento que o SFace do OpenCV Zoo espera
+// depois do alignCrop: RGB em 0 a 255, sem normalizacao, borda preta.
 //
-// ATENCAO: estes valores vieram da leitura de como o OpenCV alimenta o
-// modelo, e ainda NAO foram conferidos contra uma imagem real passando pelos
-// dois caminhos. Pre-processamento errado nao da erro -- da um vetor
-// sutilmente errado. Confira antes de usar em producao.
+// O FaceRecognizerSF chama dnn::blobFromImage com swapRB=true sobre uma
+// imagem BGR; partindo de image.Image em Go (RGB), os canais ja estao na
+// ordem certa e BGR deve ficar false.
+//
+// Conferido pelo TestPipelineBateComOpenCV no pacote faces.
 func OpcoesSFace() Options {
-	return Options{Size: 112, Scale: [3]float32{1, 1, 1}, BGR: true}
+	return Options{
+		Size:  112,
+		Scale: [3]float32{1, 1, 1},
+		Borda: BordaConstante,
+	}
 }
 
 // normalizada preenche os campos zerados com os padroes.

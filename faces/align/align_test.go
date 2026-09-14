@@ -562,8 +562,8 @@ func TestOpcoesPadraoENormalizacao(t *testing.T) {
 		}
 	}
 
-	if s := OpcoesSFace(); !s.BGR || s.Size != 112 {
-		t.Errorf("OpcoesSFace = %+v, quero BGR em 112", s)
+	if s := OpcoesSFace(); s.BGR || s.Size != 112 || s.Borda != BordaConstante {
+		t.Errorf("OpcoesSFace = %+v, quero RGB 112 com borda constante", s)
 	}
 }
 

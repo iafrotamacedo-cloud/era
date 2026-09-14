@@ -47,7 +47,7 @@ mesma direção. Comparar identidades vira, então, medir um ângulo.
 
 ## Estado
 
-Fases 1 a 6 de 7 concluídas.
+Fases 1 a 7 de 7 concluídas.
 
 | Fase | Pacote | Entrega | Estado |
 |---|---|---|---|
@@ -57,7 +57,7 @@ Fases 1 a 6 de 7 concluídas.
 | 4 | validação | modelo real conferido contra o ONNX Runtime | **pronto** |
 | 5 | `detect`, `align` | detecção e alinhamento | **pronto** |
 | 6 | `index` | busca 1:N, serialização | **pronto** |
-| 7 | — | API pública, docs, benchmarks | — |
+| 7 | `faces` | API pública, docs, benchmarks | **pronto** |
 
 **A Fase 4 fechou o marco do projeto.** O vetor gerado aqui bate com o do ONNX
 Runtime — a meta era a quarta casa decimal, o resultado foi a quinta.
@@ -262,7 +262,10 @@ cortaria bastante. Fica registrado como conhecido, não corrigido.
 
 ## Detecção e alinhamento
 
-**`align`** endireita o rosto antes do reconhecimento. A rede foi treinada com
+**`align`** endireita o rosto antes do reconhecimento. Para o SFace do OpenCV
+Zoo, use `CropSFace`: alinhamento Umeyama igual ao `cv::FaceRecognizerSF`
+(`ParaOpenCV` + `warpOpenCV` com pixel inteiro, como `cv::warpAffine`) e
+tensor RGB 0–255 com borda preta — não o `Crop` genérico com centro de pixel. A rede foi treinada com
 rostos numa posição canônica — olhos numa altura fixa, boca noutra, tamanho
 padronizado — e alimentá-la com um rosto torto degrada a acurácia muito mais
 do que a intuição sugere.
@@ -397,6 +400,56 @@ ele, meio arquivo carregaria e produziria respostas erradas em silêncio.
 Todo tamanho lido do arquivo é conferido contra o que resta no buffer **antes
 de qualquer alocação**: um campo corrompido não pode fazer o programa tentar
 reservar gigabytes.
+
+## API pública
+
+O pacote raiz [`faces`](.) amarra o pipeline inteiro. Quem importa só ele não
+precisa montar `detect`, `align` e `graph` na mão.
+
+```go
+import "github.com/iafrotamacedo-cloud/era/faces"
+
+eng, err := faces.Open(faces.Config{
+    YuNet: "caminho/yunet.onnx",
+    SFace: "caminho/sface.onnx",
+})
+rostos, err := eng.Embed(foto)           // todos os rostos
+maior, err := eng.EmbedLargest(foto)     // o mais confiante
+ids, err := eng.Recognize(foto, ix, 0.38) // busca no índice
+```
+
+Os caminhos vazios em `Config` usam `ERA_YUNET` / `ERA_SFACE` ou, na ausência
+deles, `models/yunet.onnx` e `models/sface.onnx` relativos ao diretório de
+trabalho do processo.
+
+O índice 1:N continua no pacote [`index`](index/) — persistência e limiar de
+decisão são de quem usa.
+
+### Validação do pipeline
+
+`TestPipelineBateComOpenCV` em `engine_test.go` compara o pipeline completo
+contra `cv2.FaceRecognizerSF` na mesma imagem sintética do teste de
+detecção. A referência vive em `testdata/embeddings.bin`, gerada por:
+
+```
+python faces/testdata/gerar_pipeline.py models/yunet.onnx models/sface.onnx
+```
+
+Esse teste fecha a pendência de `OpcoesSFace`: se o cosseno bate, o
+pré-processamento do alinhamento está certo para o SFace do OpenCV Zoo.
+
+### Desempenho do pipeline
+
+Rode no pacote `faces`:
+
+```
+go test ./faces/ -bench=. -run='^$' -benchtime=2s
+```
+
+Na mesma máquina do SFace isolado (~84 ms/rosto), o pipeline completo
+(detecção + alinhamento + embedding) custa o esperado: a inferência do
+reconhecimento continua sendo o gargalo; detecção e alinhamento somam poucos
+milissegundos em imagens de 640×640.
 
 ## Licença
 

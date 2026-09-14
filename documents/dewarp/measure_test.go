@@ -51,8 +51,13 @@ func TestMeasureLineSoDoisPontosCaiParaReta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MeasureLine: %v", err)
 	}
-	if got.LinearBow != 0 {
-		t.Errorf("LinearBow com 2 pontos = %v, quero 0 (reta exata por definicao)", got.LinearBow)
+	// tolerancia, nao igualdade exata: duas retas por dois pontos passam
+	// pela eliminacao gaussiana de geom.PolyFit, que pode deixar um resto
+	// de arredondamento na ordem de 1e-15 -- em ponto flutuante, zero
+	// matematico nao e a mesma coisa que 0.0 bit a bit. Medido em CI: o
+	// AMD64 zerou exato, o ARM64 do runner de macOS deixou ~8 ULPs.
+	if math.Abs(got.LinearBow) > 1e-9 {
+		t.Errorf("LinearBow com 2 pontos = %v, quero ~0 (reta exata por definicao)", got.LinearBow)
 	}
 	if got.CurveBow != got.LinearBow {
 		t.Errorf("CurveBow = %v, quero igual a LinearBow (%v) -- sem pontos para ajustar curva", got.CurveBow, got.LinearBow)

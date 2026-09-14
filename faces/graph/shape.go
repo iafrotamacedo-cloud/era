@@ -32,6 +32,17 @@ func montaIdentity(b *builder, n *onnx.Node) (*operation, error) {
 }
 
 // montaConstant produz um tensor fixo, guardado no proprio no.
+//
+// Alem de virar uma operacao normal (para quem consome o valor como
+// entrada de execucao, caso comum de Add/Mul com uma constante), o valor
+// tambem entra em b.consts na hora -- para que um no mais adiante que
+// precise dele como PESO (Conv, por exemplo, via b.peso) o encontre na
+// montagem. Isso importa de verdade: exportadores que gravam pesos
+// treinados como Constant em vez de initializer existem (o caso real e o
+// paddle2onnx do PaddlePaddle, que exporta PP-OCRv4 assim -- 0
+// initializers, centenas de Constant). Sem isso, todo Conv depois de um
+// Constant desses falharia na montagem dizendo que a entrada "precisa ser
+// um peso constante", mesmo sendo, na pratica, exatamente isso.
 func montaConstant(b *builder, n *onnx.Node) (*operation, error) {
 	a := n.Attr("value")
 	if a == nil || a.T == nil {
@@ -45,6 +56,10 @@ func montaConstant(b *builder, n *onnx.Node) (*operation, error) {
 	t, err := tensor.FromSlice(vals, a.T.Shape()...)
 	if err != nil {
 		return nil, err
+	}
+
+	if len(n.Outputs) > 0 && n.Outputs[0] != "" {
+		b.consts[n.Outputs[0]] = t
 	}
 
 	op := novaOp(n, func(ws *nn.Workspace, ins []*tensor.Tensor) ([]*tensor.Tensor, error) {

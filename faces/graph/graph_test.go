@@ -808,6 +808,31 @@ func TestConstant(t *testing.T) {
 	}
 }
 
+// TestConstantComoPeso cobre o exportador que grava pesos treinados como
+// Constant em vez de initializer -- o caso real do paddle2onnx
+// (PaddlePaddle), que exporta o PP-OCRv4 assim: 0 initializers, os pesos
+// inteiros vem por Constant. Sem um no Constant alimentar b.consts na
+// montagem, todo Conv depois dele falharia dizendo que a entrada "precisa
+// ser um peso constante" -- mesmo sendo, na pratica, exatamente isso.
+func TestConstantComoPeso(t *testing.T) {
+	m := modelo(&onnx.Graph{
+		Nodes: []*onnx.Node{
+			no("Constant", "c", nil, []string{"w"},
+				&onnx.Attribute{Name: "value", Type: onnx.AttrTensor,
+					T: peso("", []int64{1, 1, 1, 1}, []float32{2})}),
+			no("Conv", "conv", []string{"x", "w"}, []string{"y"},
+				aInts("kernel_shape", 1, 1)),
+		},
+		Inputs:  []*onnx.ValueInfo{{Name: "x"}},
+		Outputs: []*onnx.ValueInfo{{Name: "y"}},
+	})
+
+	got := rodar(t, m, tensor.MustFromSlice([]float32{3, 4}, 1, 1, 1, 2))
+	if want := []float32{6, 8}; !reflect.DeepEqual(got, want) {
+		t.Errorf("saida = %v, quero %v (peso 2 vindo de Constant, nao de initializer)", got, want)
+	}
+}
+
 // ---------- pooling ----------
 
 func TestGlobalAveragePool(t *testing.T) {

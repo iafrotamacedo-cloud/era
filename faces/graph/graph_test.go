@@ -309,6 +309,77 @@ func TestConvRecusaOQueNaoSuporta(t *testing.T) {
 	}
 }
 
+// TestConvTranspose confere o caso real que motivou esta op: upsample 2x
+// aprendido, kernel 2x2 stride 2. Pesos do ONNX ConvTranspose vem como
+// [InC, OutC/Groups, KH, KW] -- eixo trocado em relacao a Conv, que guarda
+// pelo canal de SAIDA primeiro -- entao o teste usa dois canais de saida
+// com pesos DIFERENTES (1 e 2) para pegar uma troca de eixo: se o
+// montador lesse a forma do jeito de Conv, ele erraria a forma ou
+// devolveria os dois canais trocados.
+//
+// Com peso uniforme por canal (todo kh,kw = a mesma constante) e stride
+// igual ao kernel, cada posicao de entrada "pinta" um bloco 2x2 inteiro na
+// saida com o mesmo valor -- entao da para prever a saida inteira so
+// multiplicando e somando o bias, sem rastrear qual (kh,kw) caiu onde.
+func TestConvTranspose(t *testing.T) {
+	m := grafoSimples(
+		no("ConvTranspose", "deconv", []string{"x", "w", "b"}, []string{"y"},
+			aInts("kernel_shape", 2, 2), aInts("strides", 2, 2)),
+		peso("w", []int64{1, 2, 2, 2}, []float32{
+			1, 1, 1, 1, // canal de saida 0: peso 1 em todo o kernel
+			2, 2, 2, 2, // canal de saida 1: peso 2 em todo o kernel
+		}),
+		peso("b", []int64{2}, []float32{100, 200}),
+	)
+
+	got := rodar(t, m, tensor.MustFromSlice([]float32{5, 7}, 1, 1, 1, 2))
+	// entrada 1x2 = [5, 7]. Cada valor pinta um bloco de 2 colunas (a
+	// altura de entrada e 1, mas kernel 2 com stride 2 ainda produz 2
+	// linhas de saida, ambas iguais, porque cada linha usa uma posicao
+	// diferente do kernel sobre a mesma unica linha de entrada).
+	// canal 0 (peso 1, bias 100): 5*1+100=105, 7*1+100=107
+	// canal 1 (peso 2, bias 200): 5*2+200=210, 7*2+200=214
+	want := []float32{
+		105, 105, 107, 107,
+		105, 105, 107, 107,
+		210, 210, 214, 214,
+		210, 210, 214, 214,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("saida = %v, quero %v", got, want)
+	}
+}
+
+func TestConvTransposeAgrupada(t *testing.T) {
+	// 2 canais de entrada, 2 grupos: cada entrada vira sua propria saida,
+	// sem mistura -- o mesmo espirito de TestConvDepthwise.
+	m := grafoSimples(
+		no("ConvTranspose", "deconv", []string{"x", "w"}, []string{"y"},
+			aInts("kernel_shape", 1, 1), aInt("group", 2)),
+		peso("w", []int64{2, 1, 1, 1}, []float32{2, 10}),
+	)
+
+	got := rodar(t, m, tensor.MustFromSlice([]float32{1, 2, 3, 4}, 1, 2, 1, 2))
+	if want := []float32{2, 4, 30, 40}; !reflect.DeepEqual(got, want) {
+		t.Errorf("saida = %v, quero %v", got, want)
+	}
+}
+
+func TestConvTransposeRecusaOutputPadding(t *testing.T) {
+	m := grafoSimples(
+		no("ConvTranspose", "deconv", []string{"x", "w"}, []string{"y"},
+			aInts("kernel_shape", 2, 2), aInts("strides", 2, 2), aInts("output_padding", 1, 0)),
+		peso("w", []int64{1, 1, 2, 2}, make([]float32, 4)),
+	)
+	_, err := New(m)
+	if err == nil {
+		t.Fatal("deveria dar erro")
+	}
+	if !strings.Contains(err.Error(), "output_padding") {
+		t.Errorf("a mensagem deveria conter %q: %v", "output_padding", err)
+	}
+}
+
 func TestBatchNormalization(t *testing.T) {
 	// gamma=2, beta=1, mean=5, var=4, eps=0 -> escala 1, deslocamento -4
 	m := grafoSimples(
@@ -385,6 +456,25 @@ func TestAtivacoes(t *testing.T) {
 		}},
 		{"Tanh", nil, func(v float32) float32 {
 			return float32(math.Tanh(float64(v)))
+		}},
+		{"HardSigmoid", nil, func(v float32) float32 {
+			y := 0.2*v + 0.5
+			if y < 0 {
+				return 0
+			}
+			if y > 1 {
+				return 1
+			}
+			return y
+		}},
+		{"HardSigmoid", []*onnx.Attribute{aFloat("alpha", 1), aFloat("beta", 0)}, func(v float32) float32 {
+			if v < 0 {
+				return 0
+			}
+			if v > 1 {
+				return 1
+			}
+			return v
 		}},
 	}
 

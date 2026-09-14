@@ -71,3 +71,63 @@ func Conv2DRef(src, weights, bias []float32, outC int, p ConvParams, dst []float
 		}
 	}
 }
+
+// ConvTranspose2DRef executa a convolucao transposta pela definicao mais
+// literal: para cada posicao de ENTRADA, distribui o valor pelas posicoes
+// de saida que uma convolucao direta teria lido dali. E o algoritmo oposto
+// do que ConvTranspose2D usa (que reune, em vez de distribuir) -- os dois
+// concordarem nos testes e uma conferencia de verdade, nao a mesma conta
+// escrita duas vezes.
+//
+//	src:     [C, H, W]
+//	weights: [C, outC/Groups, KH, KW]
+//	bias:    [outC] ou nil
+//	dst:     [outC, OutH, OutW]
+func ConvTranspose2DRef(src, weights, bias []float32, outC int, p ConvTransposeParams, dst []float32) {
+	p = p.norm()
+	oh, ow := p.OutH(), p.OutW()
+	inPerGroup := p.C / p.Groups
+	outPerGroup := outC / p.Groups
+
+	for i := range dst[:outC*oh*ow] {
+		dst[i] = 0
+	}
+
+	for ic := 0; ic < p.C; ic++ {
+		g := ic / inPerGroup
+
+		for iy := 0; iy < p.H; iy++ {
+			for ix := 0; ix < p.W; ix++ {
+				v := src[(ic*p.H+iy)*p.W+ix]
+
+				for kh := 0; kh < p.KH; kh++ {
+					oy := iy*p.StrideH - p.PadH + kh*p.DilH
+					if oy < 0 || oy >= oh {
+						continue
+					}
+
+					for kw := 0; kw < p.KW; kw++ {
+						ox := ix*p.StrideW - p.PadW + kw*p.DilW
+						if ox < 0 || ox >= ow {
+							continue
+						}
+
+						for ocLocal := 0; ocLocal < outPerGroup; ocLocal++ {
+							oc := g*outPerGroup + ocLocal
+							w := weights[((ic*outPerGroup+ocLocal)*p.KH+kh)*p.KW+kw]
+							dst[(oc*oh+oy)*ow+ox] += w * v
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if bias != nil {
+		for oc := 0; oc < outC; oc++ {
+			for i := 0; i < oh*ow; i++ {
+				dst[oc*oh*ow+i] += bias[oc]
+			}
+		}
+	}
+}

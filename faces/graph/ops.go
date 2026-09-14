@@ -26,6 +26,7 @@ func init() {
 	registro = map[string]montador{
 		// Com pesos
 		"Conv":               montaConv,
+		"ConvTranspose":      montaConvTranspose,
 		"BatchNormalization": montaBatchNorm,
 		"PRelu":              montaPRelu,
 		"Gemm":               montaGemm,
@@ -38,12 +39,13 @@ func init() {
 		"AveragePool":       montaAveragePool,
 
 		// Ativacoes
-		"Relu":      montaRelu,
-		"LeakyRelu": montaLeakyRelu,
-		"Sigmoid":   montaSigmoid,
-		"Tanh":      montaTanh,
-		"Clip":      montaClip,
-		"Softmax":   montaSoftmax,
+		"Relu":        montaRelu,
+		"LeakyRelu":   montaLeakyRelu,
+		"Sigmoid":     montaSigmoid,
+		"Tanh":        montaTanh,
+		"Clip":        montaClip,
+		"HardSigmoid": montaHardSigmoid,
+		"Softmax":     montaSoftmax,
 
 		// Aritmetica
 		"Add": montaBinario("Add"),
@@ -223,6 +225,90 @@ func montaConv(b *builder, n *onnx.Node) (*operation, error) {
 
 	camada, err := nn.NewConv2D(nomeDe(n), nn.Conv2DConfig{
 		InC: inPorGrupo * grupos, OutC: outC,
+		KH: kh, KW: kw,
+		StrideH: strideH, StrideW: strideW,
+		PadH: padH, PadW: padW,
+		DilH: dilH, DilW: dilW,
+		Groups: grupos,
+	}, w.Flat(), bias)
+	if err != nil {
+		return nil, err
+	}
+
+	return novaOp(n, func(ws *nn.Workspace, ins []*tensor.Tensor) ([]*tensor.Tensor, error) {
+		out, err := camada.Forward(ws, ins[0])
+		if err != nil {
+			return nil, err
+		}
+		return []*tensor.Tensor{out}, nil
+	}), nil
+}
+
+// montaConvTranspose monta a convolucao transposta (deconvolucao, upsample
+// aprendido). O layout dos pesos no ONNX e [InC, OutC/Groups, KH, KW] --
+// ao contrario de Conv, que guarda pelo canal de saida primeiro -- entao
+// outC vem do segundo eixo do peso multiplicado pelos grupos, nao do
+// primeiro.
+//
+// output_padding (que resolve ambiguidade de tamanho quando o stride nao
+// divide certo) nao e suportado: nao aparece nos modelos que a ERA tem
+// como alvo, e aproximar em silencio seria pior que recusar.
+func montaConvTranspose(b *builder, n *onnx.Node) (*operation, error) {
+	if len(n.Inputs) < 2 || len(n.Inputs) > 3 {
+		return nil, fmt.Errorf("ConvTranspose espera 2 ou 3 entradas, recebeu %d", len(n.Inputs))
+	}
+	if err := exigeSaidaUnica(n); err != nil {
+		return nil, err
+	}
+
+	w, err := b.peso(n, 1, "pesos")
+	if err != nil {
+		return nil, err
+	}
+	if w.Rank() != 4 {
+		return nil, fmt.Errorf("pesos tem forma %v; a ERA so trata convolucao transposta 2D", w.Shape)
+	}
+
+	if op := n.AttrInts("output_padding", nil); op != nil {
+		for _, v := range op {
+			if v != 0 {
+				return nil, fmt.Errorf("output_padding=%v ainda nao e suportado", op)
+			}
+		}
+	}
+
+	grupos := int(n.AttrInt("group", 1))
+	inC, outPorGrupo, kh, kw := w.Shape[0], w.Shape[1], w.Shape[2], w.Shape[3]
+	outC := outPorGrupo * grupos
+
+	if ks := n.AttrInts("kernel_shape", nil); ks != nil {
+		if len(ks) != 2 || int(ks[0]) != kh || int(ks[1]) != kw {
+			return nil, fmt.Errorf("kernel_shape %v nao bate com a forma dos pesos %v", ks, w.Shape)
+		}
+	}
+
+	strideH, strideW, err := par(n, "strides", 1)
+	if err != nil {
+		return nil, err
+	}
+	dilH, dilW, err := par(n, "dilations", 1)
+	if err != nil {
+		return nil, err
+	}
+	padH, padW, err := padding(n)
+	if err != nil {
+		return nil, err
+	}
+
+	var bias []float32
+	if bt, err := b.pesoOpcional(n, 2, "vies"); err != nil {
+		return nil, err
+	} else if bt != nil {
+		bias = bt.Flat()
+	}
+
+	camada, err := nn.NewConvTranspose2D(nomeDe(n), nn.ConvTranspose2DConfig{
+		InC: inC, OutC: outC,
 		KH: kh, KW: kw,
 		StrideH: strideH, StrideW: strideW,
 		PadH: padH, PadW: padW,

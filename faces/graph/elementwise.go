@@ -52,6 +52,24 @@ func montaTanh(b *builder, n *onnx.Node) (*operation, error) {
 	}), nil
 }
 
+// montaHardSigmoid e a aproximacao linear e barata da sigmoide,
+// y = clip(alpha*x + beta, 0, 1), comum em backbones eficientes (a
+// familia MobileNetV3/PP-LCNet) porque nao precisa de exponencial.
+func montaHardSigmoid(b *builder, n *onnx.Node) (*operation, error) {
+	alpha := n.AttrFloat("alpha", 0.2)
+	beta := n.AttrFloat("beta", 0.5)
+	return mapaUnario(n, func(v float32) float32 {
+		y := alpha*v + beta
+		if y < 0 {
+			return 0
+		}
+		if y > 1 {
+			return 1
+		}
+		return y
+	}), nil
+}
+
 // montaClip corta os valores num intervalo. E como ReLU6 e outras ativacoes
 // limitadas aparecem no ONNX.
 //

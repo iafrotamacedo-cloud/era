@@ -47,7 +47,7 @@ mesma direção. Comparar identidades vira, então, medir um ângulo.
 
 ## Estado
 
-Fases 1 a 7 de 7 concluídas.
+Fases 1 a 8 de 8 concluídas.
 
 | Fase | Pacote | Entrega | Estado |
 |---|---|---|---|
@@ -58,6 +58,7 @@ Fases 1 a 7 de 7 concluídas.
 | 5 | `detect`, `align` | detecção e alinhamento | **pronto** |
 | 6 | `index` | busca 1:N, serialização | **pronto** |
 | 7 | `faces` | API pública, docs, benchmarks | **pronto** |
+| 8 | `spoof`, `liveness` | anti-spoof passivo + movimento multi-frame | **pronto** |
 
 **A Fase 4 fechou o marco do projeto.** O vetor gerado aqui bate com o do ONNX
 Runtime — a meta era a quarta casa decimal, o resultado foi a quinta.
@@ -412,15 +413,18 @@ import "github.com/iafrotamacedo-cloud/era/faces"
 eng, err := faces.Open(faces.Config{
     YuNet: "caminho/yunet.onnx",
     SFace: "caminho/sface.onnx",
+    AntiSpoof: &faces.AntiSpoofConfig{}, // opcional: ERA_ANTISPOOF
 })
 rostos, err := eng.Embed(foto)           // todos os rostos
 maior, err := eng.EmbedLargest(foto)     // o mais confiante
+vivo, err := eng.EmbedLive(foto)         // maior + anti-spoof passivo
+emb, err := eng.VerifyLive(frames)       // movimento + anti-spoof + vetor
 ids, err := eng.Recognize(foto, ix, 0.38) // busca no índice
 ```
 
-Os caminhos vazios em `Config` usam `ERA_YUNET` / `ERA_SFACE` ou, na ausência
-deles, `models/yunet.onnx` e `models/sface.onnx` relativos ao diretório de
-trabalho do processo.
+Os caminhos vazios em `Config` usam `ERA_YUNET` / `ERA_SFACE` / `ERA_ANTISPOOF`
+ou, na ausência deles, `models/yunet.onnx`, `models/sface.onnx` e
+`models/anti-spoof.onnx` relativos ao diretório de trabalho do processo.
 
 O índice 1:N continua no pacote [`index`](index/) — persistência e limiar de
 decisão são de quem usa.

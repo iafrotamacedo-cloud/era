@@ -19,6 +19,24 @@ permissiva — o critério mais restritivo dos dois manda.
 |---|---|---|---|
 | Detecção + 5 pontos | **YuNet** | MIT *(upstream BSD-3)* | OpenCV Zoo |
 | Reconhecimento | **SFace** | Apache 2.0 | OpenCV Zoo |
+| Anti-spoof passivo | **MiniFAS** (facenox) | Apache 2.0 *(código)* | [face-antispoof-onnx](https://github.com/facenox/face-antispoof-onnx) |
+
+### Por que MiniFAS (facenox)
+
+O alvo original era o **anti-spoof-mn3** do Open Model Zoo (MIT, MobileNetV3,
+128×128), mas não há ONNX público confiável — os IR do OpenVINO vinham
+corrompidos (~1 KB). O **MiniFAS** do facenox tem ONNX pronto
+(`best_model.onnx`, ~1,9 MB), entrada `1×3×128×128` float normalizado,
+saída `1×2` logits (real/spoof). Treinado em CelebA-Spoof.
+
+Pré-processamento igual ao `demo.py` do repositório: recorte quadrado com
+expansão 1,5× da caixa, letterbox 128×128, RGB ÷ 255, CHW. Classificação por
+diferença de logits (`real - spoof`), não softmax.
+
+Variável de ambiente: `ERA_ANTISPOOF`. Padrão: `models/anti-spoof.onnx`.
+
+**Pendente:** calibrar limiar e variância de movimento (`liveness`) com câmera
+real antes de integrar ao FrotaHub.
 
 ### Por que YuNet
 

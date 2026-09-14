@@ -106,8 +106,8 @@ func montaFlatten(b *builder, n *onnx.Node) (*operation, error) {
 // montaReshape muda a forma sem mover dados.
 //
 // A nova forma vem como TENSOR de int64, nao como atributo -- foi uma
-// mudanca do opset 5, para permitir formas calculadas em execucao. Aqui ela
-// precisa ser constante.
+// mudanca do opset 5, para permitir formas calculadas em execucao. Pode ser
+// constante (initializer) ou produzida em runtime (Shape/Gather/Concat).
 //
 // Dois valores tem significado especial: 0 copia a dimensao correspondente da
 // entrada, e -1 e inferido a partir do total de elementos.
@@ -116,44 +116,71 @@ func montaReshape(b *builder, n *onnx.Node) (*operation, error) {
 		return nil, fmt.Errorf("Reshape espera 2 entradas, recebeu %d", len(n.Inputs))
 	}
 
-	formaT, err := b.peso(n, 1, "forma")
-	if err != nil {
-		return nil, err
-	}
-
-	// A forma chega como float32 porque o carregamento converte tudo; os
-	// valores sao inteiros exatos e pequenos, entao a volta e segura.
-	crua := formaT.Flat()
-	alvo := make([]int, len(crua))
-	for i, v := range crua {
-		alvo[i] = int(v)
-	}
+	formaConst := b.constOpcional(n, 1)
 
 	// allowzero (opset 14) inverte o significado do zero: em vez de copiar a
 	// dimensao da entrada, passa a significar dimensao vazia mesmo.
 	permiteZero := n.AttrInt("allowzero", 0) != 0
 
-	return novaOp(n, func(ws *nn.Workspace, ins []*tensor.Tensor) ([]*tensor.Tensor, error) {
-		x := ins[0]
-		forma := make([]int, len(alvo))
-		copy(forma, alvo)
-
-		for i, d := range forma {
-			if d == 0 && !permiteZero {
-				if i >= x.Rank() {
-					return nil, fmt.Errorf("a forma pede copiar a dimensao %d, que a entrada %v nao tem", i, x.Shape)
-				}
-				forma[i] = x.Shape[i]
-			}
+	if formaConst != nil {
+		crua := formaConst.Flat()
+		alvo := make([]int, len(crua))
+		for i, v := range crua {
+			alvo[i] = int(v)
 		}
+		return novaOp(n, func(ws *nn.Workspace, ins []*tensor.Tensor) ([]*tensor.Tensor, error) {
+			return reshapeComForma(ws, ins[0], alvo, permiteZero)
+		}), nil
+	}
 
-		// Reshape do pacote tensor ja infere o -1 e valida o total.
-		out, err := garanteContiguo(ws, x).Reshape(forma...)
+	// Forma calculada em execucao (Shape -> Gather -> Concat -> Reshape).
+	return novaOp(n, func(ws *nn.Workspace, ins []*tensor.Tensor) ([]*tensor.Tensor, error) {
+		if len(ins) < 2 {
+			return nil, fmt.Errorf("Reshape dinamico sem tensor de forma")
+		}
+		forma, err := formaDeTensor(ins[1], ins[0], permiteZero)
 		if err != nil {
 			return nil, err
 		}
-		return []*tensor.Tensor{out}, nil
+		return reshapeComForma(ws, ins[0], forma, permiteZero)
 	}), nil
+}
+
+func formaDeTensor(t *tensor.Tensor, x *tensor.Tensor, permiteZero bool) ([]int, error) {
+	crua := t.Flat()
+	forma := make([]int, len(crua))
+	for i, v := range crua {
+		forma[i] = int(v)
+	}
+	for i, d := range forma {
+		if d == 0 && !permiteZero {
+			if i >= x.Rank() {
+				return nil, fmt.Errorf("a forma pede copiar a dimensao %d, que a entrada %v nao tem", i, x.Shape)
+			}
+			forma[i] = x.Shape[i]
+		}
+	}
+	return forma, nil
+}
+
+func reshapeComForma(ws *nn.Workspace, x *tensor.Tensor, alvo []int, permiteZero bool) ([]*tensor.Tensor, error) {
+	forma := make([]int, len(alvo))
+	copy(forma, alvo)
+
+	for i, d := range forma {
+		if d == 0 && !permiteZero {
+			if i >= x.Rank() {
+				return nil, fmt.Errorf("a forma pede copiar a dimensao %d, que a entrada %v nao tem", i, x.Shape)
+			}
+			forma[i] = x.Shape[i]
+		}
+	}
+
+	out, err := garanteContiguo(ws, x).Reshape(forma...)
+	if err != nil {
+		return nil, err
+	}
+	return []*tensor.Tensor{out}, nil
 }
 
 func montaTranspose(b *builder, n *onnx.Node) (*operation, error) {

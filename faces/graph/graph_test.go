@@ -698,6 +698,76 @@ func TestFlattenEReshape(t *testing.T) {
 	})
 }
 
+func TestShapeGatherReshapeDinamico(t *testing.T) {
+	t.Run("Shape", func(t *testing.T) {
+		m := grafoSimples(no("Shape", "s", []string{"x"}, []string{"y"}))
+		g, err := New(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		outs, err := g.Run(nn.NewWorkspace(), map[string]*tensor.Tensor{
+			"x": tensor.MustFromSlice([]float32{1, 2, 3, 4, 5, 6}, 2, 3),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := []float32{2, 3}; !reflect.DeepEqual(outs["y"].Flat(), want) {
+			t.Errorf("Shape = %v, quero %v", outs["y"].Flat(), want)
+		}
+	})
+
+	t.Run("Gather eixo 0", func(t *testing.T) {
+		m := grafoSimples(
+			no("Gather", "g", []string{"x", "idx"}, []string{"y"}, aInt("axis", 0)),
+			peso("idx", []int64{2}, []float32{1, 2}),
+		)
+		g, err := New(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		outs, err := g.Run(nn.NewWorkspace(), map[string]*tensor.Tensor{
+			"x": tensor.MustFromSlice([]float32{10, 11, 20, 21, 30, 31}, 3, 2),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := []float32{20, 21, 30, 31}; !reflect.DeepEqual(outs["y"].Flat(), want) {
+			t.Errorf("Gather = %v, quero %v", outs["y"].Flat(), want)
+		}
+	})
+
+	t.Run("Reshape com forma dinamica", func(t *testing.T) {
+		m := modelo(&onnx.Graph{
+			Name: "dinamico",
+			Nodes: []*onnx.Node{
+				no("Shape", "sh", []string{"x"}, []string{"forma_raw"}),
+				no("Gather", "g", []string{"forma_raw", "zero"}, []string{"n"}, aInt("axis", 0)),
+				no("Concat", "c", []string{"n", "menos_um"}, []string{"forma"}, aInt("axis", 0)),
+				no("Reshape", "r", []string{"x", "forma"}, []string{"y"}),
+			},
+			Initializers: []*onnx.Tensor{
+				peso("zero", []int64{1}, []float32{0}),
+				peso("menos_um", []int64{1}, []float32{-1}),
+			},
+			Inputs:  []*onnx.ValueInfo{{Name: "x"}},
+			Outputs: []*onnx.ValueInfo{{Name: "y"}},
+		})
+		g, err := New(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		outs, err := g.Run(nn.NewWorkspace(), map[string]*tensor.Tensor{
+			"x": tensor.MustFromSlice([]float32{1, 2, 3, 4, 5, 6}, 2, 3),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := []int{2, 3}; !reflect.DeepEqual(outs["y"].Shape, want) {
+			t.Errorf("forma = %v, quero %v", outs["y"].Shape, want)
+		}
+	})
+}
+
 func TestTranspose(t *testing.T) {
 	m := grafoSimples(no("Transpose", "t", []string{"x"}, []string{"y"}, aInts("perm", 0, 2, 1)))
 

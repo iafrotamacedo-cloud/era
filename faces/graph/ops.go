@@ -56,6 +56,8 @@ func init() {
 		// Forma
 		"Flatten":   montaFlatten,
 		"Reshape":   montaReshape,
+		"Shape":     montaShape,
+		"Gather":    montaGather,
 		"Transpose": montaTranspose,
 		"Concat":    montaConcat,
 		"Unsqueeze": montaUnsqueeze,
@@ -96,6 +98,15 @@ func (b *builder) pesoOpcional(n *onnx.Node, idx int, papel string) (*tensor.Ten
 		return nil, nil
 	}
 	return b.peso(n, idx, papel)
+}
+
+// constOpcional devolve um initializer quando a entrada existe e e constante.
+// Entrada dinamica (produzida por outro no) devolve nil sem erro.
+func (b *builder) constOpcional(n *onnx.Node, idx int) *tensor.Tensor {
+	if idx >= len(n.Inputs) || n.Inputs[idx] == "" {
+		return nil
+	}
+	return b.consts[n.Inputs[idx]]
 }
 
 // nomeDe devolve o nome do no, ou algo util quando ele nao tem nome.

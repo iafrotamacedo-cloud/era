@@ -35,6 +35,13 @@ diferença de logits (`real - spoof`), não softmax.
 
 Variável de ambiente: `ERA_ANTISPOOF`. Padrão: `models/anti-spoof.onnx`.
 
+Este arquivo **está versionado** no repositório (exceção ao `.gitignore`) para
+facilitar clone e CI; atribuição e ressalvas em `models/README.md`.
+
+**Ressalva de dataset:** treinado em **CelebA-Spoof** (uso não comercial na
+licença do dataset). O facenox distribui os pesos sob Apache 2.0; para produto
+comercial, confirmar com jurídico — mesma classe de risco que SFace × MS-Celeb-1M.
+
 **Pendente:** calibrar limiar e variância de movimento (`liveness`) com câmera
 real antes de integrar ao FrotaHub.
 
@@ -114,8 +121,10 @@ melhores restritos. É o preço da licença limpa, e é um preço consciente.
 
 ## Como isso afeta o código
 
-Nenhum modelo é embutido no repositório. O `.onnx` fica fora do controle de
-versão (`.gitignore`), e quem usa a ERA aponta o caminho do arquivo.
+Quase nenhum modelo é embutido: `yunet.onnx` e `sface.onnx` ficam fora do git
+(`.gitignore`); quem usa aponta o caminho ou baixa do OpenCV Zoo. Exceção:
+`models/anti-spoof.onnx` (~1,9 MB), versionado por conveniência — ver
+`models/README.md`.
 
 O executor de grafo roda qualquer ONNX de reconhecimento facial — trocar de
 modelo é trocar um arquivo e reconferir o limiar de similaridade. Se alguma

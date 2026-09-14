@@ -20,9 +20,9 @@ só intenção.
 
 - **Zero dependências.** Só a biblioteca padrão do Go.
 - **Sem cgo.** Cross-compila para 11 plataformas, do Raspberry Pi ao WASM.
-- **Sem pesos embutidos.** Você traz o modelo `.onnx` que quiser usar. Isso
-  mantém a licença do código limpa e desacopla o projeto da licença dos
-  modelos.
+- **Pesos sob demanda.** YuNet e SFace você traz (OpenCV Zoo). O anti-spoof
+  MiniFAS vem versionado em `models/anti-spoof.onnx` (~1,9 MB); demais `.onnx`
+  continuam fora do git.
 - **Sem estado.** A biblioteca não guarda nada. Onde salvar é decisão de
   quem usa.
 

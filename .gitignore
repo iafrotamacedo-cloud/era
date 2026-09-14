@@ -9,9 +9,12 @@
 *.out
 *.prof
 
-# pesos de modelo: nunca versionar
+# pesos de modelo (excecao: anti-spoof versionado — ver models/README.md)
 *.onnx
-models/
+!models/anti-spoof.onnx
+models/*
+!models/anti-spoof.onnx
+!models/README.md
 
 # dados de mapa: nunca versionar, sao centenas de MB e tem licenca propria
 *.pbf

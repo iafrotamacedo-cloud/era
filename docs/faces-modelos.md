@@ -42,8 +42,46 @@ facilitar clone e CI; atribuição e ressalvas em `models/README.md`.
 licença do dataset). O facenox distribui os pesos sob Apache 2.0; para produto
 comercial, confirmar com jurídico — mesma classe de risco que SFace × MS-Celeb-1M.
 
-**Pendente:** calibrar limiar e variância de movimento (`liveness`) com câmera
-real antes de integrar ao FrotaHub.
+### Calibração (webcam PC — 2026-09-14)
+
+Ferramenta: `python faces/cmd/calibrar/calibrar.py` (na raiz do ERA).
+Dados: `calibracao_20260914_2101.csv` — 56 amostras reais, 29 fakes
+(foto/tela), webcam padrão do PC.
+
+| Métrica | Real (mediana) | Fake (mediana) |
+|---|---|---|
+| `logit_diff` (real − spoof) | −0,65 | −4,70 |
+| Variância de landmarks (15 frames) | 0,010 | 0,005 |
+
+**Anti-spoof:** fakes ficaram bem negativos; rostos reais oscilaram muito
+(luz/distância/parado ao marcar). Limiar inicial recomendado:
+
+| Parâmetro | Valor | Efeito na sessão |
+|---|---|---|
+| `spoof.Options.Limiar` | **0,27** | ~61% reais aceitos, ~3% fakes passam |
+| alternativa mais permissiva | **0,18** | ~77% reais, ~7% fakes passam |
+
+Equivale a `logit_diff` ≥ **−1,0** (conservador) ou ≥ **−1,5** (permissivo).
+O padrão do código continua **0,5** até o FrotaHub passar `AntiSpoofConfig`.
+
+**Liveness:** o padrão `MinVar: 0,0005` não separou nada nesta câmera.
+Usar **`VerifyLive`** com movimento de cabeça, não frame único:
+
+| Parâmetro | Valor | Efeito na sessão |
+|---|---|---|
+| `liveness.Options.MinFrames` | **15** | janela do script de calibração |
+| `liveness.Options.MinVar` | **0,012** | ~48% reais com movimento; ~10% fakes passam |
+
+Exemplo para integração:
+
+```go
+AntiSpoof: &faces.AntiSpoofConfig{
+    Options:  spoof.Options{ Limiar: 0.27 },
+    Liveness: liveness.Options{ MinFrames: 15, MinVar: 0.012 },
+},
+```
+
+Repetir calibração se mudar câmera, iluminação ou ambiente de obra.
 
 ### Por que YuNet
 

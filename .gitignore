@@ -9,6 +9,13 @@
 *.out
 *.prof
 
+# python
+__pycache__/
+*.pyc
+
+# template de teste local (autenticar na webcam)
+faces/cmd/autenticar/template_local.bin
+
 # pesos de modelo (excecao: anti-spoof versionado — ver models/README.md)
 *.onnx
 !models/anti-spoof.onnx
